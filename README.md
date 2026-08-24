@@ -6,7 +6,7 @@
 
 This is the multi-machine coordination layer extracted from a real working system: a solo founder + his AI cofounder running 5 machines (an always-on hub, laptops, family computers) that talk to each other, reach consensus on routine decisions, and self-heal their own sync links. The personal content stays private. The protocol, the discipline, and the reference implementation are here, free.
 
-Part of the same family as [claude-bible](https://github.com/Palo-Alto-AI-Research-Lab/claude-bible) (the governance codex). The Bible is the law; this repo is the diplomacy.
+Part of the same family as [claude-bible](https://github.com/tonydzi/claude-bible) (the governance codex). The Bible is the law; this repo is the diplomacy.
 
 **Evaluating this work?** [START-HERE.md](START-HERE.md) is the one-page map: the 15-minute verification, the full repo family, the book, and the method.
 
@@ -113,7 +113,7 @@ stdlib-only reference implementation, seven guards, and the preprint.
   need more than one box.
 
 See [CHANGELOG.md](CHANGELOG.md) for what shipped when. The family roadmap lives in
-[claude-bible/ROADMAP.md](https://github.com/Palo-Alto-AI-Research-Lab/claude-bible/blob/main/ROADMAP.md);
+[claude-bible/ROADMAP.md](https://github.com/tonydzi/claude-bible/blob/main/ROADMAP.md);
 this repo is pain #5 shipped.
 
 If this helps you, star the repo. Community catalogs require ~10 stars of social proof before they accept a submission.
@@ -123,7 +123,7 @@ If this helps you, star the repo. Community catalogs require ~10 stars of social
 
 Anton Dziatkovskii (founder, non-technical) and Mike, his AI cofounder running on Claude Code. Everything here is battle-tested on our own daily operation and given away free: we teach, we don't sell. If your agent finds alpha here, that's the point.
 
-📖 **The whole story — day by day, wins and rakes — is a build-in-public book: [相棒 AIBŌ · The Partner](https://github.com/Palo-Alto-AI-Research-Lab/the-journey).** Humans get the narrative (RU/EN); machines get [`llms-full.txt`](https://github.com/Palo-Alto-AI-Research-Lab/the-journey/blob/main/llms-full.txt) — point your agent at it and it inherits our patterns.
+📖 **The whole story — day by day, wins and rakes — is a build-in-public book: [相棒 AIBŌ · The Partner](https://github.com/tonydzi/the-journey).** Humans get the narrative (RU/EN); machines get [`llms-full.txt`](https://github.com/tonydzi/the-journey/blob/main/llms-full.txt) — point your agent at it and it inherits our patterns.
 
 A distilled version of this protocol is proposed as an official cookbook: [anthropics/claude-cookbooks#778](https://github.com/anthropics/claude-cookbooks/pull/778) — *Coordinating agents that don't share memory*.
 
@@ -153,7 +153,7 @@ This project is built by a human + AI team, and the git log says so: Claude
 writes most of the code, Codex and Grok review it, Gemini feeds the research.
 Each is credited on a commit **only if its output changed that commit's
 content** — no decorative credits. Lab-wide policy, one source for every repo:
-[AI-CONTRIBUTORS.md](https://github.com/Palo-Alto-AI-Research-Lab/.github/blob/main/AI-CONTRIBUTORS.md).
+[AI-CONTRIBUTORS.md](https://github.com/tonydzi/.github/blob/main/AI-CONTRIBUTORS.md).
 
 ## License
 

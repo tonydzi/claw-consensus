@@ -7,8 +7,8 @@ authors:
     given-names: Anton
     orcid: "https://orcid.org/0000-0001-7408-3054"
     affiliation: "Palo Alto AI Research Lab"
-repository-code: "https://github.com/Palo-Alto-AI-Research-Lab/claw-consensus"
-url: "https://github.com/Palo-Alto-AI-Research-Lab/claw-consensus"
+repository-code: "https://github.com/tonydzi/claw-consensus"
+url: "https://github.com/tonydzi/claw-consensus"
 license: MIT
 keywords:
   - multi-agent systems

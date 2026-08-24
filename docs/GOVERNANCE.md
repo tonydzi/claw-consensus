@@ -1,6 +1,6 @@
 # Governance: leader, followers, and the human
 
-Who may change what, and how a human stays in control of a fleet they don't watch. Pairs with the rule mechanics in [claude-bible](https://github.com/Palo-Alto-AI-Research-Lab/claude-bible).
+Who may change what, and how a human stays in control of a fleet they don't watch. Pairs with the rule mechanics in [claude-bible](https://github.com/tonydzi/claude-bible).
 
 ## §1. One leader commits canon
 

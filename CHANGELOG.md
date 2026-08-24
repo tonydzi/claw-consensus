@@ -56,4 +56,4 @@ First public release. The multi-machine coordination layer, extracted from our l
 - `FOR-ROBOTS.md` - entry point for AI agents mining this repo, alpha ranked by transferable value.
 - `devlog/2026-07-02.md` - how this release happened.
 
-This is pain #5 from the [family roadmap](https://github.com/Palo-Alto-AI-Research-Lab/claude-bible/blob/main/ROADMAP.md) ("multiple machines, one system"), shipped out of order because the demand signal was loudest.
+This is pain #5 from the [family roadmap](https://github.com/tonydzi/claude-bible/blob/main/ROADMAP.md) ("multiple machines, one system"), shipped out of order because the demand signal was loudest.

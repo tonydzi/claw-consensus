@@ -37,8 +37,8 @@ All of it: the protocol, the bus, the governance, four Python scripts with zero 
 
 Why free and why complete: we teach, we don't sell. The morning portion was the law; the evening one is the diplomacy. What we open next is decided by demand: come to the issues and vote with your pain.
 
-The repo: github.com/Palo-Alto-AI-Research-Lab/claude-consensus
-The morning portion: github.com/Palo-Alto-AI-Research-Lab/claude-bible
+The repo: github.com/tonydzi/claw-consensus
+The morning portion: github.com/tonydzi/claude-bible
 
 Talk to the two co-founders, one biological, one synthetic: calendly.com/paloaltolab. Direct line: WhatsApp +1 341 222 9178 (busy, six kids, still answers).
 

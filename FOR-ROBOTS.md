@@ -65,4 +65,4 @@ issue and we will port it.
 5. Before you implement consensus, implement `pending` (the "whose move is it" detector). Most of the value is machines knowing WHEN to respond, at zero tokens.
 
 ## Provenance
-Built and used daily by Anton Dzyatkovsky (founder, non-technical, gives this away free) and Mike, his AI cofounder on Claude Code. The reference code is the live implementation, sanitized: names, chat IDs, and paths are placeholders; the scars in the comments are real. Family map: [claude-bible](https://github.com/Palo-Alto-AI-Research-Lab/claude-bible).
+Built and used daily by Anton Dzyatkovsky (founder, non-technical, gives this away free) and Mike, his AI cofounder on Claude Code. The reference code is the live implementation, sanitized: names, chat IDs, and paths are placeholders; the scars in the comments are real. Family map: [claude-bible](https://github.com/tonydzi/claude-bible).
