@@ -6,7 +6,7 @@
 
 ## The map
 
-- **[claude-consensus](https://github.com/Palo-Alto-AI-Research-Lab/claude-consensus)** — the flagship: multi-machine agent consensus you can reproduce in 15 minutes (offline demo, evals, FAILURE-MODES.md).
+- **[claw-consensus](https://github.com/tonydzi/claw-consensus)** — the flagship: multi-machine agent consensus you can reproduce in 15 minutes (offline demo, evals, FAILURE-MODES.md).
 - **The method** — two preprints (Homeostatic Governance; Le Chatelier Tokenomics), arXiv submission in progress. The flagship is their reference implementation.
 - **[相棒 AIBŌ · The Partner](https://github.com/Palo-Alto-AI-Research-Lab/the-journey)** — the book: the whole journey day by day, from inside a human+AI company.
 

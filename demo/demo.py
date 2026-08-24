@@ -331,7 +331,7 @@ def main():
         i = argv.index("--json")
         json_out = argv[i + 1] if i + 1 < len(argv) else os.path.join(HERE, "last-run.json")
 
-    print("claude-consensus demo -- offline, 0 tokens, stdlib only")
+    print("claw-consensus demo -- offline, 0 tokens, stdlib only")
     print("engine: %s" % os.path.relpath(ENGINE, ROOT))
     print("python: %s" % sys.version.split()[0])
 

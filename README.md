@@ -1,4 +1,4 @@
-# claude-consensus - multiple machines, one system
+# claw-consensus - multiple machines, one system
 
 > Who builds this and why → [START-HERE.md](START-HERE.md) · one page of proof: [tonydzi.github.io](https://tonydzi.github.io/)
 
@@ -99,7 +99,7 @@ Maintained like our own system: small commits daily, and **every noticeable chan
 release**. (It used to say "a release twice a week, Mon & Thu" — v0.2.0 was written on 28 July and
 had no tag until 4 August, so the calendar promise was replaced by one tied to the work.)
 
-**Now — [v0.2.1](https://github.com/Palo-Alto-AI-Research-Lab/claude-consensus/releases).** The
+**Now — [v0.2.1](https://github.com/tonydzi/claw-consensus/releases).** The
 protocol, the dual-rail bus, ACK discipline, leader/follower canon, self-healing sync, the
 stdlib-only reference implementation, seven guards, and the preprint.
 
@@ -145,7 +145,7 @@ The formal treatment is the companion preprint *Homeostatic Governance: A Gorsky
 
 ## Cite this work
 
-If claude-consensus shows up in your research, cite it via [CITATION.cff](CITATION.cff) (GitHub's "Cite this repository" button). Academic identity: Anton Dzyatkovsky publishes as **Anton Dziatkovskii** ([ORCID 0000-0001-7408-3054](https://orcid.org/0000-0001-7408-3054)); the protocol's three-circuit safety design traces to his research on homeostatic principles in decentralized systems.
+If claw-consensus shows up in your research, cite it via [CITATION.cff](CITATION.cff) (GitHub's "Cite this repository" button). Academic identity: Anton Dzyatkovsky publishes as **Anton Dziatkovskii** ([ORCID 0000-0001-7408-3054](https://orcid.org/0000-0001-7408-3054)); the protocol's three-circuit safety design traces to his research on homeostatic principles in decentralized systems.
 
 ## AI contributors
 
