@@ -209,6 +209,66 @@ Publishing the protocol honestly means saying which guards belong to which.
 
 ---
 
+## J. The instrument that only knew how to call a human **[production-only]**
+
+**Symptom.** Sync conflicts on ledger and journal files piled up for months. **Four**
+separate instruments detected them, and all four printed the same sentence: *"merge unique
+lines into the live copy first, then delete the conflict file."* **Zero** of the four merged
+anything. The nightly sweeper cleaned only conflict copies that were strict subsets of the
+live file and left everything divergent for a person - `LEFT 78 for review`, every night, for
+a long time. One journal had accumulated nine conflict copies holding nine lines that existed
+nowhere in the live file.
+
+**Root cause.** A detector that prints an *instruction* reads as a working guard - it goes red
+honestly, on time, with the right diagnosis. On an unattended routine nobody executes its
+output. It is a human step spliced into the middle of a machine pipeline.
+
+**Guard.** Write the executor, and hang it on a door that already runs (one line in the
+existing nightly sweep) rather than standing up a new routine for it. Then the half that
+matters more: **the executor must know what it cannot do.** A dry run before rollout showed
+that line-wise merging would have poured 92 lines into a Python registry, 119 into a JSON
+ranking file and 95 into a dashboard HTML - each of those "merges" a corrupt file. Auto-merge
+is therefore allowed only for **append-only** artefacts (`.jsonl`, `.log`, plain journals);
+everything else goes to REVIEW untouched. First live run: 102 lines merged, queue 78 -> 76.
+
+**Why it is not in the reference.** The conflict queue is a property of the *sync layer* the
+ledger rides on, not of the consensus protocol. If your shards travel by a file-sync tool,
+you inherit this failure whether or not you use this engine.
+
+**Lesson.** An alarm is not a fix, and "the guard is red" is not "the system is handling it."
+Ask of every instrument: who executes this, and what proves they did? A robot that repairs
+everything is worse than a robot that repairs nothing.
+
+---
+
+## K. Delivery asserted from the sender's own disk **[production-only]**
+
+**Symptom.** For three weeks the gate that registers a fix as a parcel for the other machines
+accepted *"the file exists on my disk"* as proof the parcel was applicable on the receiver.
+Files the sync layer does not carry do not travel: the receiver's apply died with
+`FileNotFoundError` while the sender's registration was green. An audit of 315 parcels found
+the most common shape of the class - an apply step that runs only the `_test_*` file and never
+carries, or even names, the thing under test (22 parcels). One such parcel died on a peer on
+11 Aug and the fleet went on believing it had shipped.
+
+**Root cause.** Between "I have the file" and "they will have the file" sits a rail, and the
+rail has to be **proven, not assumed**. A hardcoded list of "folders that travel" goes stale
+quietly: a retro on 25 Aug recorded the hooks directory as excluded from sync; by 28 Aug the
+ignore file already let hooks through. Four days to be wrong, and nothing said so.
+
+**Guard.** The source of truth about delivery is the **receiver's** sync ignore-rules and node
+config, read at registration time, not a path list in our code. (`#include` inside a sync
+ignore file is a *directive*, not a comment - parsing it as a comment silently changes the
+answer.) Unable to read those rules = "don't know" = **fail-closed**. A parcel that
+legitimately carries no payload must declare a reason, and that reason is stored in the parcel
+record. Two limits named out loud rather than papered over: mtime is not a version, and the
+same filename on both ends is not the same content.
+
+**Lesson.** "Sent" is a claim about you; "delivered" is a claim about them. A gate that reads
+only your own disk is measuring the wrong machine - the same mistake as E, one layer down.
+
+---
+
 ## Scars we keep in the comments
 
 Beyond the above, the reference keeps smaller lessons inline: a `--details` string

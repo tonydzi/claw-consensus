@@ -5,6 +5,34 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
+## v0.3.1 - 2026-08-29
+
+Two more scars on [docs/FAILURE-MODES.md](docs/FAILURE-MODES.md), both found in our own fleet
+this week, both about the sync layer the ledger rides on rather than the protocol itself - so
+both are marked **[production-only]** and explained instead of hidden.
+
+- **J. The instrument that only knew how to call a human.** Four instruments detected sync
+  conflicts on ledger and journal files; all four printed the same merge instruction; none of
+  them merged. The nightly sweep left 78 divergent files "for review" every night, and one
+  journal had nine conflict copies holding nine lines that were in no live file. The fix is an
+  executor hung on the door that already runs - plus the harder half: it auto-merges only
+  append-only artefacts, because a dry run proved line-wise merging would have corrupted a
+  Python registry (92 lines), a JSON ranking file (119) and a dashboard (95).
+- **K. Delivery asserted from the sender's own disk.** For three weeks the parcel gate took
+  "the file exists here" as proof it would arrive there; 315 parcels audited, 22 of them
+  running only their own test file and never carrying the thing under test. Truth about
+  delivery now comes from the receiver's sync rules, and "cannot read the rules" is
+  fail-closed.
+
+## v0.3.0 - 2026-08-25
+
+The rebrand release: **claude-consensus became claw-consensus** (name decided by Anton on
+24 Aug). GitHub redirects the old URLs; update your remotes anyway. Also: dead org links fixed
+after the org was deleted on 13 Aug (everything lives under `tonydzi` now), `CITATION.cff`
+follows the rename, README cross-links fleet-deploy, and the failure-modes page is finally
+named what it is. Written into this file on 2026-08-29 - the release was cut on 25 Aug and the
+changelog was not updated with it, which is the same lapse v0.2.1 records below.
+
 ## v0.2.1 - 2026-08-04
 
 Contribution plumbing, no protocol change.
