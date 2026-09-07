@@ -145,6 +145,8 @@ The formal treatment is the companion preprint *Homeostatic Governance: A Gorsky
 
 ## Cite this work
 
+**The paper about this system is published:** "Operating a Human-Governed Multi-Machine LLM Agent Fleet: An Experience Report" — [DOI 10.5281/zenodo.22639714](https://doi.org/10.5281/zenodo.22639714) (preprint, CC BY 4.0; the LaTeX source lives in [paper/](paper/)). The three-circuit safety model behind the protocol: [DOI 10.5281/zenodo.22639712](https://doi.org/10.5281/zenodo.22639712).
+
 If claw-consensus shows up in your research, cite it via [CITATION.cff](CITATION.cff) (GitHub's "Cite this repository" button). Academic identity: Anton Dzyatkovsky publishes as **Anton Dziatkovskii** ([ORCID 0000-0001-7408-3054](https://orcid.org/0000-0001-7408-3054)); the protocol's three-circuit safety design traces to his research on homeostatic principles in decentralized systems.
 
 ## AI contributors

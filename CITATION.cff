@@ -25,6 +25,22 @@ abstract: >-
   the author's research on homeostatic principles in decentralized systems.
 references:
   - type: article
+    title: "Operating a Human-Governed Multi-Machine LLM Agent Fleet: An Experience Report"
+    authors:
+      - family-names: Dziatkovskii
+        given-names: Anton
+    year: 2026
+    doi: "10.5281/zenodo.22639714"
+    notes: "The paper about this software (preprint, CC BY 4.0)."
+  - type: article
+    title: "Homeostatic Governance: A Gorsky-Anokhin Alternative to the Viable System Model for Decentralized Organizations"
+    authors:
+      - family-names: Dziatkovskii
+        given-names: Anton
+    year: 2026
+    doi: "10.5281/zenodo.22639712"
+    notes: "claw-consensus is the reference implementation of this paper's three-circuit model (preprint, CC BY 4.0)."
+  - type: article
     title: "The use of blockchain technology and homeostatic principles in the monetary policies of states"
     authors:
       - family-names: Dziatkovskii
