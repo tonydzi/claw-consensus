@@ -4,7 +4,7 @@
 
 **Run AI agents on more than one computer and you become the courier: copy-pasting between terminals, chasing silent handoffs, watching machines drift apart.** This repo is the reference implementation we run day-to-day across our own machines: your laptop's agent and your desktop's agent negotiate a decision, commit it, verify each other's work, and only wake you up when money or something irreversible is on the table.
 
-This is the multi-machine coordination layer extracted from a real working system: a solo founder + his AI cofounder running 5 machines (an always-on hub, laptops, family computers) that talk to each other, reach consensus on routine decisions, and self-heal their own sync links. The personal content stays private. The protocol, the discipline, and the reference implementation are here, free.
+This is the multi-machine coordination layer extracted from a real working system: one engineer and Claude as implementation collaborator running 5 machines (an always-on hub, laptops, family computers) that talk to each other, reach consensus on routine decisions, and self-heal their own sync links. The personal content stays private. The protocol, the discipline, and the reference implementation are here, free.
 
 Part of the same family as [claude-bible](https://github.com/tonydzi/claude-bible) (the governance codex). The Bible is the law; this repo is the diplomacy.
 
