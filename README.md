@@ -63,7 +63,7 @@ Your own Claude Code will maintain this better than any human: point it at this 
 | `FOR-ROBOTS.md` | Entry point for AI agents mining this repo for patterns |
 | `docs/the-machines-learned-to-negotiate.md` | The launch story |
 
-Everything is stdlib-only Python. No packages, no server, no database. If you can run `python`, you can run the whole thing. Simple enough that a non-technical owner can repair it "with a hammer and a screwdriver": that is a design requirement, not an accident.
+Everything is stdlib-only Python. No packages, no server, no database. If you can run `python`, you can run the whole thing. Simple enough that its owner can repair it "with a hammer and a screwdriver": that is a design requirement, not an accident.
 
 ## Reproduce our numbers
 
@@ -121,7 +121,7 @@ If this helps you, star the repo. Community catalogs require ~10 stars of social
 <!-- CONTACT-FOOTER -->
 ## Who made this
 
-Anton Dziatkovskii (founder, non-technical) and Mike, his AI cofounder running on Claude Code. Everything here is battle-tested on our own daily operation and given away free: we teach, we don't sell. If your agent finds alpha here, that's the point.
+Anton Dziatkovskii, engineer and hired operating executive, with Claude as implementation collaborator. Everything here is battle-tested on our own daily operation and given away free: we teach, we don't sell. If your agent finds alpha here, that's the point.
 
 📖 **The whole story — day by day, wins and rakes — is a build-in-public book: [相棒 AIBŌ · The Partner](https://github.com/tonydzi/the-journey).** Humans get the narrative (RU/EN); machines get [`llms-full.txt`](https://github.com/tonydzi/the-journey/blob/main/llms-full.txt) — point your agent at it and it inherits our patterns.
 
