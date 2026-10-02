@@ -269,6 +269,66 @@ only your own disk is measuring the wrong machine - the same mistake as E, one l
 
 ---
 
+## L. The aggregate that hid a dead channel **[production-only]**
+
+**Symptom.** A watchdog guarding a *set* of recording channels reported audio healthy for
+5.4 days while the most important channel in the set was dead. The dead one was the machine's
+default communication device, i.e. the far side of every call; it stopped on 25 Sep at 12:27 and
+nobody noticed, because a neighbouring microphone kept writing and the check measured
+`max(timestamp)` over the whole table. The same week, a nightly archiver printed
+`ARCHIVE OK: dialogs=0 skipped=0 new_msgs=0` for seven nights straight after one account died:
+its coverage guard read `if n and skipped >= max(5, n * 5 // 100)`, which never fires when `n`
+is zero. One guard was armed against a partial failure, the other against a 50% failure, and a
+100% failure walked past both.
+
+**Root cause.** Two different ways of proving "something is alive" instead of "each thing is
+alive". The aggregate answers a question nobody asked. And the component's own health endpoint
+made it worse: it reported `active (last activity: 0s ago)` the whole time, because "last
+activity" was the age of the last *start*, and the stream was dying about 200 ms after each start
+and restarting immediately. A corpse that restarts forever looks liveliest of all.
+
+**Guard.** Ask per channel, not per table: does *every* channel that the indicator calls active
+have fresh output? A channel honestly reported inactive is not judged at all, which removes the
+false alarm on legitimate silence without inventing a "how long may it be quiet" threshold, and
+thresholds do not work here anyway: the longest legitimate pause on that channel was 115.5 h
+against 130 h of real death, 12% apart, so any threshold is either blind or lying. Ask the
+**capture** layer rather than the processing layer: on the same evening the speakers had chunks
+at 22:09 and transcription at 19:03, so judging by transcription would have screamed at a healthy
+channel. And "could not check" is **red**, not green: the first version of this fix silently
+skipped the per-channel check when the health endpoint was quiet and returned OK, which is the
+very defect it was built to repair. Two outside reviewers found that independently.
+
+**Lesson.** An aggregate is a claim about the set; liveness is a claim about each member. If the
+subject is a set, the verdict has to be per member, and the indicator's own word about a member
+is a claim to be checked against that member's output.
+
+---
+
+## M. The instrument that could not say what it had not judged **[production-only]**
+
+**Symptom.** A state report printed `NO-TARGET = 61 of 69` as one category among several, and the
+number read like an answer. It meant the instrument had judged 4% of its subject. A second one,
+the same day, answered `fresh (need=0)` about a directory where it tracked 12 files out of 48507:
+a truthful statement about 0.02% of the question. Separately, a search tool asked for counts
+returned `4 total occurrences across 4 files` where the real figure was 685 files, 171x apart,
+because on a slow volume it had stopped walking and reported what it had, using the word "total".
+
+**Root cause.** Coverage is part of a verdict, and none of the three reported it. The data was
+not wrong; the frame around the number was. A report with no blind-zone line invites the reader
+to treat "what I looked at" as "what exists".
+
+**Guard.** Every report carries one line: *cannot judge N of M, reason*. Define blind in the
+instrument, not in the reader's head: coverage below 90%, or more "don't know" than verdicts, is
+a **BLIND** report and says so at the top. Zero items is "nothing to judge", never "all clear".
+Coverage counts verdicts about the subject itself, a file, a line, a live response, and not about
+a hand-set `status:` field someone wrote last month. When two instruments disagree, settle it with
+a third and cheapest one aimed at a single named item, rather than the one whose answer you prefer.
+
+**Lesson.** A silent instrument is worse than a missing one: a missing instrument is visible, and
+false calm is not. "Look at it yourself" is not a verdict.
+
+---
+
 ## Scars we keep in the comments
 
 Beyond the above, the reference keeps smaller lessons inline: a `--details` string

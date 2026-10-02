@@ -5,6 +5,35 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
+## v0.3.2 - 2026-10-02
+
+Two more scars on [docs/FAILURE-MODES.md](docs/FAILURE-MODES.md), both **[production-only]**, both
+about instruments rather than the protocol, and both measured in our own fleet between 30 Sep and
+2 Oct 2026. Plus the papers behind this engine are now reachable from the repo itself.
+
+- **L. The aggregate that hid a dead channel.** A watchdog over a *set* of recording channels
+  measured `max(timestamp)` across the whole table, so it stayed green for 5.4 days while the
+  default communication device (the far side of every call) was dead. The component's own health
+  endpoint said `active (last activity: 0s ago)` throughout, because that counter was the age of
+  the last *start*, and the stream died about 200 ms after each start and restarted at once. Same
+  week, a nightly archiver reported `dialogs=0 ... OK` for seven nights because its coverage guard
+  read `if n and skipped >= max(5, n * 5 // 100)`, which never fires at `n == 0`. Thresholds cannot
+  save this: the longest legitimate silence on that channel was 115.5 h against 130 h of real
+  death. The guard asks per channel, asks the capture layer rather than the processing layer, and
+  treats "could not check" as red.
+- **M. The instrument that could not say what it had not judged.** `NO-TARGET = 61 of 69` printed
+  as one category among several meant 4% coverage and read as green; a second instrument answered
+  `fresh (need=0)` about a directory where it tracked 12 files out of 48507; a search tool asked
+  for counts returned "4 total" where the truth was 685 files. Every report now carries one line,
+  *cannot judge N of M, reason*, and declares itself BLIND below 90% coverage. Zero items means
+  "nothing to judge", never "all clear".
+- **The papers are linked from the repo.** `CITATION.cff` and the README now point at the Zenodo
+  DOIs instead of describing work a reader could not reach, and the GitHub URLs left over from a
+  deleted organisation now resolve to `tonydzi`.
+- **The README says what is missing.** An explicit section on what this engine does not have yet,
+  and a "read this with AI" entry point for people who would rather interrogate the repo than skim
+  it. Docs across the repo now point at `SYSTEM.md` as the map of the whole system.
+
 ## v0.3.1 - 2026-08-29
 
 Two more scars on [docs/FAILURE-MODES.md](docs/FAILURE-MODES.md), both found in our own fleet
