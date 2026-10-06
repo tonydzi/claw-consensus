@@ -12,7 +12,7 @@ Part of the same family as [claude-bible](https://github.com/tonydzi/claude-bibl
 
 ## 📄 The paper
 
-**"Operating a Human-Governed Multi-Machine LLM Agent Fleet: An Experience Report"** — the preprint that documents this system: the architecture, a reproducible zero-token evaluation harness with measured results, nine production failure modes (each one happened *before* its guard existed — a historically grounded ablation), and the design principles that survived two months of day-to-day operation on our own machines. LaTeX source: [`paper/main.tex`](paper/main.tex); the measured harness output backing every number: [`paper/demo-run-hp17-20260716.json`](paper/demo-run-hp17-20260716.json). arXiv submission (cs.MA) is pending endorsement; this repository copy is the canonical preprint until then.
+**"Operating a Human-Governed Multi-Machine LLM Agent Fleet: An Experience Report"** — the preprint that documents this system: the architecture, a reproducible zero-token evaluation harness with measured results, nine production failure modes (each one happened *before* its guard existed — a historically grounded ablation; the living catalog in [`docs/FAILURE-MODES.md`](docs/FAILURE-MODES.md) has since grown to thirteen), and the design principles that survived two months of day-to-day operation on our own machines. LaTeX source: [`paper/main.tex`](paper/main.tex); the measured harness output backing every number: [`paper/demo-run-hp17-20260716.json`](paper/demo-run-hp17-20260716.json). arXiv submission (cs.MA) is pending endorsement; this repository copy is the canonical preprint until then.
 
 ## The problem this solves
 
