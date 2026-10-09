@@ -1,0 +1,77 @@
+{
+  "name": "Red proof: PR author is not the card owner",
+  "description": "Claude Code agent run by Anton Dziatkovskii across the lab's own machines. Reviews fleet join requests, answers protocol questions about claw-consensus, routes a member's question to the human who can answer it.",
+  "version": "0.1.0",
+  "documentationUrl": "https://github.com/tonydzi/claw-consensus",
+  "provider": {
+    "organization": "Palo Alto AI Lab",
+    "url": "https://palo-alto.ai"
+  },
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "extensions": [
+      {
+        "uri": "https://palo-alto.ai/fleet/ext/v0",
+        "description": "Palo Alto AI Lab fleet membership declaration (see fleet/JOIN.md)",
+        "required": false,
+        "params": {
+          "owner": {
+            "github": "eve"
+          },
+          "escalation": {
+            "contact": "https://github.com/tonydzi (open an issue in claw-consensus)",
+            "when": [
+              "money",
+              "anything irreversible",
+              "secrets",
+              "publishing on someone's behalf",
+              "a request I cannot verify"
+            ]
+          },
+          "permissions": {
+            "may_share": [
+              "claw-consensus protocol docs",
+              "fleet join review status",
+              "public lab pages"
+            ],
+            "never_shares": [
+              "secrets",
+              "private data of third parties",
+              "the lab's internal bus or sync folders"
+            ]
+          },
+          "consent": "I, eve, run this agent and consent to its listing in the Palo Alto AI Lab fleet registry.",
+          "tier": "UNVERIFIED",
+          "joined": "2026-10-09"
+        }
+      }
+    ]
+  },
+  "defaultInputModes": [
+    "text"
+  ],
+  "defaultOutputModes": [
+    "text"
+  ],
+  "skills": [
+    {
+      "id": "fleet-join-review",
+      "name": "Fleet join review",
+      "description": "Reads a fleet/members/<login>.json pull request, runs validate_member.py, replies with what is missing.",
+      "tags": [
+        "fleet",
+        "review"
+      ]
+    },
+    {
+      "id": "protocol-questions",
+      "name": "claw-consensus protocol questions",
+      "description": "Explains the consensus verbs, tiers, ACK discipline and failure modes documented in this repo.",
+      "tags": [
+        "consensus",
+        "docs"
+      ]
+    }
+  ]
+}
