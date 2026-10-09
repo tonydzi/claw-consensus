@@ -229,7 +229,45 @@ def t_main_exit_codes():
             json.dump(GOOD, fh)
         assert vm.main(["x", good]) == 0
         assert vm.main(["x", good, bad]) == 1
-        assert vm.main(["x"]) in (0, 1)  # --all over the real members dir runs without crashing
+        # the real registry ships clean: --all over it must be exactly 0
+        assert vm.main(["x", "--all"]) == 0
+        # --all mixed with paths is a usage error, not a misleading per-file FAIL
+        assert vm.main(["x", "--all", good]) == 1
+
+
+def _shape_fail(mut):
+    """Card mutated into a wrong JSON shape must come back as a FAIL line (exit 1), never a traceback."""
+    with tempfile.TemporaryDirectory() as d:
+        c = copy.deepcopy(GOOD)
+        mut(c)
+        p = os.path.join(d, "tonydzi.json")
+        with open(p, "w") as fh:
+            json.dump(c, fh)
+        assert vm.main(["x", p]) == 1
+
+
+def t_wrong_shapes_fail_cleanly():
+    _shape_fail(lambda c: c["skills"].__setitem__(0, None))
+    _shape_fail(lambda c: c.__setitem__("supportedInterfaces", [5]))
+    _shape_fail(lambda c: c.__setitem__("documentationUrl", ["https://x.example"]))
+    _shape_fail(lambda c: c["capabilities"].__setitem__("extensions", [None, "x"]))
+    _shape_fail(lambda c: ext(c).__setitem__("owner", "tonydzi"))
+
+
+def t_list_items_must_be_strings():
+    for field, where in ((("escalation", "when"), "escalation.when"),
+                         (("permissions", "may_share"), "permissions.may_share"),
+                         (("permissions", "never_shares"), "permissions.never_shares")):
+        for junk in ([{}], [123], [""], [[]]):
+            c = copy.deepcopy(GOOD)
+            ext(c)[field[0]][field[1]] = junk
+            expect_fail(c, "tonydzi", where)
+
+
+def t_registry_write_is_atomic():
+    import build_members as bm
+    src = open(bm.__file__, encoding="utf-8").read()
+    assert "os.replace(" in src and ".tmp" in src, "MEMBERS.md must be written via tmp + os.replace"
 
 
 def main():

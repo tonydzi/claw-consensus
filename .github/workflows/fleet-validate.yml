@@ -3,6 +3,11 @@ name: fleet-validate
 # Runs on every pull request. No secrets are exposed to this job (pull_request from a fork
 # never receives them), the validator is stdlib Python with no network, and the only files a
 # join PR may touch are its own fleet/members/<login>.json. Anything else fails here, by design.
+#
+# Known limit (breaker panel 2026-10-09): a PR that changes fleet/validate_member.py or its tests
+# runs ITS OWN version of them here, so a green check on such a PR proves nothing. A join PR cannot
+# do this (the guard below allows exactly one file). Any other PR touching fleet/*.py or this
+# workflow needs a human maintainer's review; CI green is never a merge criterion for it.
 
 on:
   pull_request:

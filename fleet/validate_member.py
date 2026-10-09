@@ -45,6 +45,8 @@ def _fail(reason):
 
 
 def _req(obj, key, typ, where):
+    if not isinstance(obj, dict):
+        _fail(f"{where} must be a JSON object, got {type(obj).__name__}")
     if key not in obj:
         _fail(f"{where}.{key} missing")
     if not isinstance(obj[key], typ):
@@ -52,6 +54,12 @@ def _req(obj, key, typ, where):
     if typ is str and not obj[key].strip():
         _fail(f"{where}.{key} is empty")
     return obj[key]
+
+
+def _strings(items, where):
+    for i, it in enumerate(items):
+        if not isinstance(it, str) or not it.strip():
+            _fail(f"{where}[{i}] must be a non-empty string")
 
 
 def validate_card(card, expected_login, max_tier=None):
@@ -74,7 +82,7 @@ def validate_card(card, expected_login, max_tier=None):
     doc = card.get("documentationUrl")
     if not ifaces and not doc:
         _fail("static card: documentationUrl (your repo URL) is required when supportedInterfaces is empty")
-    if doc is not None and not URL_RX.match(doc):
+    if doc is not None and not (isinstance(doc, str) and URL_RX.match(doc)):
         _fail("card.documentationUrl must be https://")
     skills = _req(card, "skills", list, "card")
     if not skills:
@@ -108,11 +116,13 @@ def validate_card(card, expected_login, max_tier=None):
     _req(esc, "when", list, "fleet-ext.params.escalation")
     if not esc["when"]:
         _fail("escalation.when must name at least one condition that wakes the human")
+    _strings(esc["when"], "fleet-ext.params.escalation.when")
     perms = _req(params, "permissions", dict, "fleet-ext.params")
-    _req(perms, "may_share", list, "fleet-ext.params.permissions")
+    _strings(_req(perms, "may_share", list, "fleet-ext.params.permissions"), "fleet-ext.params.permissions.may_share")
     never = _req(perms, "never_shares", list, "fleet-ext.params.permissions")
     if not never:
         _fail("permissions.never_shares must not be empty (at minimum: secrets, private data of third parties)")
+    _strings(never, "fleet-ext.params.permissions.never_shares")
     consent = _req(params, "consent", str, "fleet-ext.params")
     if login not in consent.lower():
         _fail("consent must be written by the owner and contain the owner login")
@@ -156,17 +166,26 @@ def main(argv):
             print(f"FAIL --max-tier must be one of {TIERS}")
             return 1
         del args[i:i + 2]
+    if "--all" in args and len(args) > 1:
+        print("FAIL usage: pass --all OR explicit paths, not both")
+        return 1
     paths = args
     if paths == ["--all"] or not paths:
-        paths = sorted(
-            os.path.join(MEMBERS_DIR, f) for f in os.listdir(MEMBERS_DIR) if f.endswith(".json")
-        )
+        try:
+            paths = sorted(
+                os.path.join(MEMBERS_DIR, f) for f in os.listdir(MEMBERS_DIR) if f.endswith(".json")
+            )
+        except OSError as exc:
+            print(f"FAIL members dir unreadable: {exc}")
+            return 1
     bad = 0
     for p in paths:
         try:
             login = validate_file(p, max_tier)
             print(f"OK {login}")
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, TypeError, AttributeError, KeyError, IndexError) as exc:
+            # any malformed shape is a FAIL line with a reason, never a traceback
+            # that aborts the remaining files
             bad += 1
             print(f"FAIL {os.path.basename(p)}: {exc}")
     print(f"checked {len(paths)} file(s), failed {bad}")

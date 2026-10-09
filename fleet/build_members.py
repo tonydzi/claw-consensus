@@ -83,8 +83,13 @@ def main(argv):
             return 1
         print("MEMBERS.md up to date")
         return 0
-    with open(OUT, "w", encoding="utf-8", newline="\n") as fh:
+    # atomic: a crash mid-write must never leave a truncated registry behind
+    tmp = OUT + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, OUT)
     print("wrote " + OUT)
     return 0
 
