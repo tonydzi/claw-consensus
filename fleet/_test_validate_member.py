@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """_test_validate_member.py - red-first tests for validate_member.py.
 
-Every test takes the known-good card (fleet/members/tonydzi.json), breaks ONE thing, and asserts
+Every test takes the known-good card (fleet/_fixture_card.json, frozen), breaks ONE thing, and asserts
 the validator names that defect. A validator that never goes red is a fake validator.
 Run: python fleet/_test_validate_member.py  -> prints N/N ok, exit 0; exit 1 on any miss.
 """
@@ -15,7 +15,9 @@ HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
 import validate_member as vm  # noqa: E402
 
-with open(os.path.join(HERE, "members", "tonydzi.json"), encoding="utf-8") as _fh:
+# Frozen fixture, NOT the live registry: a join PR edits fleet/members/*, and tests whose input
+# changes with the PR under test go red for the wrong reason (live probe PR 7, 2026-10-09).
+with open(os.path.join(HERE, "_fixture_card.json"), encoding="utf-8") as _fh:
     GOOD = json.load(_fh)
 
 
