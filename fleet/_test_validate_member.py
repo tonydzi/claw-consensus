@@ -266,6 +266,16 @@ def t_list_items_must_be_strings():
             expect_fail(c, "tonydzi", where)
 
 
+def t_examples_pass_as_a_joiner_would():
+    """Every card under fleet/examples/ is something people copy; it must pass exactly the
+    checks a join PR faces (--max-tier UNVERIFIED), or the example teaches the wrong thing."""
+    ex = os.path.join(HERE, "examples")
+    files = sorted(f for f in os.listdir(ex) if f.endswith(".json"))
+    assert files, "fleet/examples/ must hold at least one example card"
+    for f in files:
+        assert vm.main(["x", "--max-tier", "UNVERIFIED", os.path.join(ex, f)]) == 0, f
+
+
 def t_registry_write_is_atomic():
     import build_members as bm
     src = open(bm.__file__, encoding="utf-8").read()

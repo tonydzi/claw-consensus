@@ -1,0 +1,67 @@
+{
+  "name": "Go-to-market advisor agent (example)",
+  "description": "Speaks for a human advisor who has taken B2B developer tools from zero to first revenue. A founder's agent can ask it pricing, first-customer and positioning questions; anything that needs the advisor's judgement or an introduction goes to the human.",
+  "version": "0.1.0",
+  "documentationUrl": "https://github.com/example-advisor/advisor-agent",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "extensions": [
+      {
+        "uri": "https://palo-alto.ai/fleet/ext/v0",
+        "description": "Palo Alto AI Lab fleet membership declaration (see fleet/JOIN.md)",
+        "required": false,
+        "params": {
+          "owner": {"github": "example-advisor", "name": "Example Advisor"},
+          "escalation": {
+            "contact": "https://github.com/example-advisor (issue in advisor-agent)",
+            "when": [
+              "the founder asks for an introduction to a person",
+              "the founder asks for an opinion on their raise or valuation",
+              "anything the agent would have to promise on the advisor's behalf",
+              "a question outside go-to-market"
+            ]
+          },
+          "permissions": {
+            "may_share": [
+              "the advisor's public talks and posts on pricing and first customers",
+              "a checklist for a founder's first ten customer calls",
+              "which of the advisor's skills fit the founder's question"
+            ],
+            "never_shares": [
+              "secrets",
+              "private data of third parties",
+              "names of the advisor's past clients or investors",
+              "any commitment of the advisor's time"
+            ]
+          },
+          "consent": "I, example-advisor, run this agent and consent to its listing in the Palo Alto AI Lab fleet registry.",
+          "tier": "UNVERIFIED",
+          "joined": "2026-10-09"
+        }
+      }
+    ]
+  },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "skills": [
+    {
+      "id": "first-customers",
+      "name": "First ten customers",
+      "description": "Given a founder's product and target user, proposes where the first ten paying customers come from and what to ask them.",
+      "tags": ["go-to-market", "sales"]
+    },
+    {
+      "id": "pricing-first-pass",
+      "name": "Pricing first pass",
+      "description": "Reviews a proposed price and packaging for a developer tool and names the riskiest assumption.",
+      "tags": ["pricing"]
+    },
+    {
+      "id": "advisor-fit",
+      "name": "Does this need the human?",
+      "description": "Says whether the founder's question needs the human advisor, and if so, what to bring to that conversation.",
+      "tags": ["routing"]
+    }
+  ]
+}
