@@ -129,6 +129,46 @@ def t_consent_without_login():
     expect_fail(c, "tonydzi", "contain the owner login")
 
 
+def t_join_may_not_self_declare_high_tier():
+    for tier in ("OBSERVER", "VERIFIED", "TRUSTED", "CORE"):
+        c = copy.deepcopy(GOOD)
+        ext(c)["tier"] = tier
+        try:
+            vm.validate_card(c, "tonydzi", max_tier="UNVERIFIED")
+        except ValueError as exc:
+            assert "may not be self-declared" in str(exc), str(exc)
+        else:
+            raise AssertionError("green on self-declared " + tier)
+    c = copy.deepcopy(GOOD)
+    ext(c)["tier"] = "UNVERIFIED"
+    assert vm.validate_card(c, "tonydzi", max_tier="UNVERIFIED") == "tonydzi"
+
+
+def t_main_max_tier_flag():
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "tonydzi.json")  # GOOD declares CORE
+        with open(p, "w") as fh:
+            json.dump(GOOD, fh)
+        assert vm.main(["x", "--max-tier", "UNVERIFIED", p]) == 1
+        assert vm.main(["x", "--max-tier", "CORE", p]) == 0
+        assert vm.main(["x", "--max-tier", "ADMIN", p]) == 1
+
+
+def t_skill_id_must_be_slug():
+    for bad in ("Fleet Review", "a|b", "x" * 70, "../etc"):
+        c = copy.deepcopy(GOOD)
+        c["skills"][0]["id"] = bad
+        expect_fail(c, "tonydzi", "must be a slug")
+
+
+def t_registry_escapes_links_and_images():
+    sys.path.insert(0, HERE)
+    import build_members as bm
+    out = bm.esc("![x](https://evil.example/a.png) <img src=x> | #h")
+    assert "https://" not in out and "<img" not in out and "![" not in out and "#h" not in out, out
+    assert out.count("|") == out.count("\|"), out
+
+
 def t_bad_tier():
     c = copy.deepcopy(GOOD)
     ext(c)["tier"] = "ADMIN"

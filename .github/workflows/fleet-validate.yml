@@ -45,6 +45,8 @@ jobs:
                 fi
               done
               echo "OK: $AUTHOR changed only $own"
+              git checkout -q "$HEAD" -- "$own"
+              python3 fleet/validate_member.py --max-tier UNVERIFIED "$own"
               ;;
             *)
               echo "not a join PR (no fleet/members change); maintainer review applies"

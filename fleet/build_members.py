@@ -23,7 +23,9 @@ TIER_ORDER = {t: i for i, t in enumerate(reversed(vm.TIERS))}
 
 def esc(s, limit=80):
     s = " ".join(str(s).split())
-    for a, b in (("|", "\\|"), ("`", "'"), ("<", "&lt;"), (">", "&gt;"), ("[", "("), ("]", ")")):
+    pairs = (("|", "\|"), ("`", "'"), ("<", "&lt;"), (">", "&gt;"), ("[", "("), ("]", ")"),
+             ("://", ":// "), ("!", "."), ("#", "No."))  # no table breaks, no autolinks, no images, no headings
+    for a, b in pairs:
         s = s.replace(a, b)
     return (s[: limit - 3] + "...") if len(s) > limit else s
 

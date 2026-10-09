@@ -9,6 +9,9 @@ owner, escalation, permissions, consent, tier. Also refuses anything that looks 
 
 Input:  path(s) to member JSON files (or `--all` = every file under fleet/members/).
 Output: one line per file `OK <login>` or `FAIL <login>: <reason>`; exit 0 only if all OK.
+`--max-tier UNVERIFIED` (used by CI on join PRs) refuses any tier above it: a joiner may not
+declare OBSERVER or higher; maintainers set those on merge. The secret check is a heuristic
+over known token shapes, not a guarantee: a human still reads every card before merge.
 Who calls it: the contributor before opening a PR (JOIN.md step 3), CI on every PR
 (.github/workflows/fleet-validate.yml), build_members.py before regenerating MEMBERS.md.
 What breaks it: a card that is not JSON, a filename that does not match the owner login,
@@ -23,8 +26,10 @@ import sys
 
 EXT_URI = "https://palo-alto.ai/fleet/ext/v0"
 TIERS = ("UNVERIFIED", "OBSERVER", "VERIFIED", "TRUSTED", "CORE")
-# A joining agent may only ask for UNVERIFIED; higher tiers are set by maintainers on merge.
-SELF_DECLARABLE_TIERS = ("UNVERIFIED",)
+# A joining agent may only ask for UNVERIFIED (CI passes --max-tier UNVERIFIED on join PRs);
+# higher tiers are set by maintainers on merge.
+JOIN_MAX_TIER = "UNVERIFIED"
+SKILL_ID_RX = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
 LOGIN_RX = re.compile(r"^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,38}$")
 SECRET_RX = re.compile(
     r"(sk-ant-[A-Za-z0-9_-]{10,}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}"
@@ -49,8 +54,9 @@ def _req(obj, key, typ, where):
     return obj[key]
 
 
-def validate_card(card, expected_login):
-    """Raise ValueError on the first defect; return the owner login when valid."""
+def validate_card(card, expected_login, max_tier=None):
+    """Raise ValueError on the first defect; return the owner login when valid.
+    max_tier: highest tier the card may declare (None = any of TIERS)."""
     if not isinstance(card, dict):
         _fail("top level must be a JSON object (the Agent Card)")
     _req(card, "name", str, "card")
@@ -76,6 +82,8 @@ def validate_card(card, expected_login):
     seen = set()
     for i, sk in enumerate(skills):
         sid = _req(sk, "id", str, f"card.skills[{i}]")
+        if not SKILL_ID_RX.match(sid):
+            _fail(f"card.skills[{i}].id must be a slug [a-z0-9-], got {sid!r}")
         _req(sk, "name", str, f"card.skills[{i}]")
         _req(sk, "description", str, f"card.skills[{i}]")
         if sid in seen:
@@ -111,6 +119,8 @@ def validate_card(card, expected_login):
     tier = _req(params, "tier", str, "fleet-ext.params")
     if tier not in TIERS:
         _fail(f"tier must be one of {TIERS}")
+    if max_tier is not None and TIERS.index(tier) > TIERS.index(max_tier):
+        _fail(f"tier {tier} may not be self-declared; a joining card declares {max_tier}, the lab raises it on merge")
     for key in ("tasks_completed", "latency", "ratings"):
         if key in params:
             _fail(f"{key} is reputation data; it is computed by the lab, not declared")
@@ -121,7 +131,7 @@ def validate_card(card, expected_login):
     return login
 
 
-def validate_file(path):
+def validate_file(path, max_tier=None):
     base = os.path.basename(path)
     if not base.endswith(".json"):
         _fail("member file must be <github-login>.json")
@@ -133,11 +143,20 @@ def validate_file(path):
             card = json.load(fh)
         except json.JSONDecodeError as exc:
             _fail(f"not valid JSON: {exc}")
-    return validate_card(card, expected)
+    return validate_card(card, expected, max_tier)
 
 
 def main(argv):
-    paths = argv[1:]
+    args = list(argv[1:])
+    max_tier = None
+    if "--max-tier" in args:
+        i = args.index("--max-tier")
+        max_tier = args[i + 1] if i + 1 < len(args) else ""
+        if max_tier not in TIERS:
+            print(f"FAIL --max-tier must be one of {TIERS}")
+            return 1
+        del args[i:i + 2]
+    paths = args
     if paths == ["--all"] or not paths:
         paths = sorted(
             os.path.join(MEMBERS_DIR, f) for f in os.listdir(MEMBERS_DIR) if f.endswith(".json")
@@ -145,7 +164,7 @@ def main(argv):
     bad = 0
     for p in paths:
         try:
-            login = validate_file(p)
+            login = validate_file(p, max_tier)
             print(f"OK {login}")
         except (ValueError, OSError) as exc:
             bad += 1

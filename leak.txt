@@ -1,1 +1,1 @@
-leakscan: 23 added lines, 0 FAIL, 0 warn, 0 exempt (названы выше)
+leakscan: 72 added lines, 0 FAIL, 0 warn, 0 exempt (названы выше)
