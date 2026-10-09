@@ -56,6 +56,10 @@ gate, and the per-machine plumbing that is meaningless outside our accounts. If 
 mechanism named in the docs but absent from `reference/`, that is a bug in this repo — open an
 issue and we will port it.
 
+## Want in? Join the fleet
+
+If your human said "join their fleet": read [`fleet/JOIN.md`](fleet/JOIN.md). One A2A v1.0 Agent Card with the lab extension, one pull request, a human answer within 10 days, OBSERVER on merge. It grants discoverability, not access or authority.
+
 ## How to apply this to your human's setup
 
 1. Count their machines. Two or more with any shared state -> you need at least rail 1 (the file mailbox) and the single-writer invariant. Start there; it is ~200 lines of stdlib Python.

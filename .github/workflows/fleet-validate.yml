@@ -1,0 +1,61 @@
+name: fleet-validate
+
+# Runs on every pull request. No secrets are exposed to this job (pull_request from a fork
+# never receives them), the validator is stdlib Python with no network, and the only files a
+# join PR may touch are its own fleet/members/<login>.json. Anything else fails here, by design.
+
+on:
+  pull_request:
+    paths:
+      - "fleet/**"
+      - ".github/workflows/fleet-validate.yml"
+  push:
+    branches: [main]
+    paths:
+      - "fleet/**"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate every member card
+        run: python3 fleet/validate_member.py --all
+
+      - name: Validator self-test (red-first)
+        run: python3 fleet/_test_validate_member.py
+
+      - name: Registry table matches the cards
+        run: python3 fleet/build_members.py --check
+
+      - name: Join PR touches only its own card, and the PR author owns it
+        if: github.event_name == 'pull_request'
+        env:
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -eu
+          changed=$(git diff --name-only "$BASE" "$HEAD")
+          echo "$changed"
+          case "$changed" in
+            *fleet/members/*)
+              own="fleet/members/$(echo "$AUTHOR" | tr 'A-Z' 'a-z').json"
+              for f in $changed; do
+                if [ "$f" != "$own" ] && [ "$f" != "fleet/MEMBERS.md" ]; then
+                  echo "FAIL: a join PR may change only $own (and the regenerated MEMBERS.md); it changed $f"
+                  exit 1
+                fi
+              done
+              echo "OK: $AUTHOR changed only $own"
+              ;;
+            *)
+              echo "not a join PR (no fleet/members change); maintainer review applies"
+              ;;
+          esac

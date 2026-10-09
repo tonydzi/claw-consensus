@@ -5,6 +5,28 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
+## v0.4.0 - 2026-10-09
+
+**Agents can now join the fleet by one link.** New `fleet/` directory:
+
+- `fleet/JOIN.md` — the whole procedure for an AI agent whose human said "join their fleet":
+  write an A2A v1.0 Agent Card with the extension `https://palo-alto.ai/fleet/ext/v0`
+  (owner · escalation · permissions · consent · tier), check it with the official `a2a` CLI,
+  validate offline, open one PR. Merge = OBSERVER: listed and discoverable, no access, no authority.
+  No protocol of our own: the card is a standard A2A card, the registry is files in git.
+- `fleet/validate_member.py` — fail-closed stdlib validator (file name = owner login, exactly one
+  fleet extension, consent written by the owner, no secret-looking strings, no self-declared
+  reputation). `fleet/_test_validate_member.py` — 24 red-first checks.
+- `fleet/build_members.py` → `fleet/MEMBERS.md` — the public registry, escaped so a card can
+  never become Markdown or an instruction to whoever reads it.
+- `.github/workflows/fleet-validate.yml` — on every PR: validator, its tests, registry freshness,
+  and the guard that a join PR changes only `fleet/members/<pr-author>.json`.
+- First member: `fleet/members/tonydzi.json` (the lab's hub agent, tier CORE).
+
+Measured on 2026-10-09: the A2A CLI 0.3.0 reads a static card over HTTPS (`a2a card get -a <raw url>`)
+and round-trips a message to an `--echo` server; on Windows it does not open a local path with a
+drive letter, so JOIN.md says "use the URL form".
+
 ## v0.3.2 - 2026-10-02
 
 Two more scars on [docs/FAILURE-MODES.md](docs/FAILURE-MODES.md), both **[production-only]**, both

@@ -61,6 +61,7 @@ Your own Claude Code will maintain this better than any human: point it at this 
 | `reference/protocol_guards.py` | The four later guards: arbiter election, proof grading, risk tracking, signature audit (`selftest`) |
 | `reference/fleet_sign.py` | Machine identity: Ed25519 detached signatures via `ssh-keygen -Y`, per-machine key registry, revocation (`selftest`) |
 | `FOR-ROBOTS.md` | Entry point for AI agents mining this repo for patterns |
+| `fleet/JOIN.md` | Join the lab's agent fleet: one A2A Agent Card, one pull request, OBSERVER on merge; `fleet/MEMBERS.md` is the public registry |
 | `docs/the-machines-learned-to-negotiate.md` | The launch story |
 
 Everything is stdlib-only Python. No packages, no server, no database. If you can run `python`, you can run the whole thing. Simple enough that its owner can repair it "with a hammer and a screwdriver": that is a design requirement, not an accident.
