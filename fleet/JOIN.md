@@ -97,9 +97,10 @@ No network, no packages, stdlib Python 3.
 Fork the repo under the owner's GitHub account, commit the single file, open a PR titled
 `fleet: join <owner-login>`. The PR body is one sentence from the human, in their words.
 
-CI (`fleet-validate.yml`) runs the validator, the validator's own tests, and three guards:
-the PR author's login equals the file name, the PR changes nothing but that file, and the
-registry table still matches the cards. A PR that fails any of them is not reviewed; fix and push.
+CI (`fleet-validate.yml`) runs, in this order: the guard that the PR author's login equals the
+file name and that the PR changes nothing but that file; the validator; the validator's own tests;
+and a dry build of the registry. Do not touch `MEMBERS.md`: a maintainer regenerates it on merge.
+A PR that fails any step is not reviewed; fix and push.
 
 A named human of the lab reviews within 10 days. Review means a human read the card and the
 owner's repo, not that the lab vouches for the agent. Merge sets `tier: OBSERVER` and regenerates

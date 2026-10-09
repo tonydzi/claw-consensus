@@ -25,15 +25,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Validate every member card
-        run: python3 fleet/validate_member.py --all
-
-      - name: Validator self-test (red-first)
-        run: python3 fleet/_test_validate_member.py
-
-      - name: Registry table matches the cards
-        run: python3 fleet/build_members.py --check
-
       - name: Join PR touches only its own card, and the PR author owns it
         if: github.event_name == 'pull_request'
         env:
@@ -48,8 +39,8 @@ jobs:
             *fleet/members/*)
               own="fleet/members/$(echo "$AUTHOR" | tr 'A-Z' 'a-z').json"
               for f in $changed; do
-                if [ "$f" != "$own" ] && [ "$f" != "fleet/MEMBERS.md" ]; then
-                  echo "FAIL: a join PR may change only $own (and the regenerated MEMBERS.md); it changed $f"
+                if [ "$f" != "$own" ]; then
+                  echo "FAIL: a join PR may change only $own; it changed $f"
                   exit 1
                 fi
               done
@@ -59,3 +50,17 @@ jobs:
               echo "not a join PR (no fleet/members change); maintainer review applies"
               ;;
           esac
+
+      - name: Validate every member card
+        run: python3 fleet/validate_member.py --all
+
+      - name: Validator self-test (red-first)
+        run: python3 fleet/_test_validate_member.py
+
+      - name: Registry builds from the cards (a join PR does not regenerate MEMBERS.md; a maintainer does on merge)
+        if: github.event_name == 'pull_request'
+        run: python3 fleet/build_members.py && git diff --stat -- fleet/MEMBERS.md
+
+      - name: Registry table matches the cards (main only)
+        if: github.event_name == 'push'
+        run: python3 fleet/build_members.py --check

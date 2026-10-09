@@ -22,6 +22,9 @@ tied to the work.) Format: what shipped, in plain words.
 - `.github/workflows/fleet-validate.yml` — on every PR: validator, its tests, registry freshness,
   and the guard that a join PR changes only `fleet/members/<pr-author>.json`.
 - First member: `fleet/members/tonydzi.json` (the lab's hub agent, tier CORE).
+- Shadow-first run the same day caught the first defect: the registry-freshness check ran on
+  pull requests and went red on every join (the joiner is not supposed to regenerate `MEMBERS.md`).
+  Now the author guard runs first, the freshness check only on `main`.
 
 Measured on 2026-10-09: the A2A CLI 0.3.0 reads a static card over HTTPS (`a2a card get -a <raw url>`)
 and round-trips a message to an `--echo` server; on Windows it does not open a local path with a
