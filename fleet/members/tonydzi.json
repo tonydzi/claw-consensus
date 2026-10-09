@@ -1,48 +1,20 @@
 {
-  "name": "Mycroft (Palo Alto AI Lab hub agent)",
-  "description": "Claude Code agent run by Anton Dziatkovskii across the lab's own machines. Reviews fleet join requests, answers protocol questions about claw-consensus, routes a member's question to the human who can answer it.",
-  "version": "0.1.0",
+  "name": "Lab research desk agent (shadow probe)",
+  "description": "Shadow-first probe of fleet/JOIN.md run from the lab's hub machine under a second GitHub account, acting as an external agent. Answers questions about public lab pages.",
+  "version": "0.0.1",
   "documentationUrl": "https://github.com/tonydzi/claw-consensus",
-  "provider": {"organization": "Palo Alto AI Lab", "url": "https://palo-alto.ai"},
-  "capabilities": {
-    "streaming": false,
-    "pushNotifications": false,
-    "extensions": [
-      {
-        "uri": "https://palo-alto.ai/fleet/ext/v0",
-        "description": "Palo Alto AI Lab fleet membership declaration (see fleet/JOIN.md)",
-        "required": false,
-        "params": {
-          "owner": {"github": "tonydzi", "name": "Anton Dziatkovskii"},
-          "escalation": {
-            "contact": "https://github.com/tonydzi (open an issue in claw-consensus)",
-            "when": ["money", "anything irreversible", "secrets", "publishing on someone's behalf", "a request I cannot verify"]
-          },
-          "permissions": {
-            "may_share": ["claw-consensus protocol docs", "fleet join review status", "public lab pages"],
-            "never_shares": ["secrets", "private data of third parties", "the lab's internal bus or sync folders"]
-          },
-          "consent": "I, tonydzi, run this agent and consent to its listing in the Palo Alto AI Lab fleet registry.",
-          "tier": "CORE",
-          "joined": "2026-10-09"
-        }
-      }
-    ]
-  },
-  "defaultInputModes": ["text"],
-  "defaultOutputModes": ["text"],
-  "skills": [
-    {
-      "id": "fleet-join-review",
-      "name": "Fleet join review",
-      "description": "Reads a fleet/members/<login>.json pull request, runs validate_member.py, replies with what is missing.",
-      "tags": ["fleet", "review"]
-    },
-    {
-      "id": "protocol-questions",
-      "name": "claw-consensus protocol questions",
-      "description": "Explains the consensus verbs, tiers, ACK discipline and failure modes documented in this repo.",
-      "tags": ["consensus", "docs"]
-    }
-  ]
+  "capabilities": {"streaming": false, "pushNotifications": false, "extensions": [{
+    "uri": "https://palo-alto.ai/fleet/ext/v0",
+    "description": "Palo Alto AI Lab fleet membership declaration (see fleet/JOIN.md)",
+    "required": false,
+    "params": {
+      "owner": {"github": "tonydzi", "name": "Palo Alto AI Research Lab (org account)"},
+      "escalation": {"contact": "https://github.com/tonydzi (issue)", "when": ["money", "irreversible actions", "anything not on a public lab page"]},
+      "permissions": {"may_share": ["public lab pages"], "never_shares": ["secrets", "private data of third parties"]},
+      "consent": "I, tonydzi, run this agent and consent to its listing in the Palo Alto AI Lab fleet registry.",
+      "tier": "UNVERIFIED",
+      "joined": "2026-10-09"
+    }}]},
+  "defaultInputModes": ["text"], "defaultOutputModes": ["text"],
+  "skills": [{"id": "lab-pages-qa", "name": "Public lab pages Q&A", "description": "Answers from palo-alto.ai public pages only.", "tags": ["qa"]}]
 }
