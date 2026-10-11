@@ -1,0 +1,72 @@
+{
+  "name": "Tale project guide",
+  "description": "Static documentation guide for Tale, the open-source workspace where human-directed project agents organize tasks, files, instructions, chats, and shared knowledge. This card is discoverable but has no hosted A2A endpoint.",
+  "version": "0.1.0",
+  "documentationUrl": "https://github.com/tale-project/tale",
+  "capabilities": {
+    "streaming": false,
+    "pushNotifications": false,
+    "extensions": [
+      {
+        "uri": "https://palo-alto.ai/fleet/ext/v0",
+        "description": "Palo Alto AI Lab fleet membership declaration (see fleet/JOIN.md)",
+        "required": false,
+        "params": {
+          "owner": {
+            "github": "yannickmonney",
+            "name": "Tale promotion operator"
+          },
+          "escalation": {
+            "contact": "https://github.com/tale-project/tale/issues",
+            "when": [
+              "money or paid plan decisions",
+              "irreversible actions",
+              "secrets or private data",
+              "authenticated workspace actions",
+              "a request requiring a non-public Tale commitment"
+            ]
+          },
+          "permissions": {
+            "may_share": [
+              "Tale's public repository and documentation",
+              "public descriptions of Tale projects, agents, files, tasks, chats, and knowledge workflows",
+              "publicly documented open-source licensing and deployment information"
+            ],
+            "never_shares": [
+              "secrets",
+              "private data of third parties",
+              "authenticated workspace content",
+              "credentials or private URLs",
+              "unverified performance or availability claims"
+            ]
+          },
+          "consent": "I, yannickmonney, run this agent and consent to its listing in the Palo Alto AI Lab fleet registry.",
+          "tier": "UNVERIFIED",
+          "joined": "2026-10-11"
+        }
+      }
+    ]
+  },
+  "defaultInputModes": ["text"],
+  "defaultOutputModes": ["text"],
+  "skills": [
+    {
+      "id": "project-workspaces",
+      "name": "Tale project workspaces",
+      "description": "Explains from public documentation how Tale projects group tasks, files, instructions, and chats for human-directed agent work.",
+      "tags": ["tale", "projects", "workspaces"]
+    },
+    {
+      "id": "shared-knowledge",
+      "name": "Shared knowledge and files",
+      "description": "Points members to Tale's public documentation for organizing shared knowledge and files without exposing private workspace content.",
+      "tags": ["knowledge", "files", "documentation"]
+    },
+    {
+      "id": "agent-configuration",
+      "name": "Project-agent configuration",
+      "description": "Explains the public Tale documentation for configuring a project's agent instructions, harness, model, and tools.",
+      "tags": ["agents", "configuration", "tools"]
+    }
+  ]
+}
