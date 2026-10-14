@@ -25,8 +25,11 @@ GOVERNANCE: one fixed leader machine (disagree-and-commit tie-break), set in con
 Verbs:
   propose "<subject>" [--details '<json>'] [--tier N] [--id <id>]
   respond <id> accept|counter|reject ["text"]
-  commit  <id>                      # record the agreed decision-of-record (the AGENT then applies it)
-  verify  <id> "<proof>"            # cross-agent epistemic flag: independent verify needed before 'done'
+  commit  <id>                      # record the agreed decision-of-record (the AGENT then applies it);
+                                    #   the leader committing WITHOUT agreement writes LEADER_OVERRIDE
+  verify  <id> "<proof>" [--advisory]  # cross-agent epistemic flag: independent verify needed before
+                                    #   'done'; a proof copied verbatim from a prior VERIFY is REFUSED
+                                    #   (--advisory = old behaviour: warn and record anyway)
   escalate <id> "<reason>"          # hand a stuck/risky proposal to the human
   status  <id>                      # show one proposal's merged state + event timeline
   list    [--open|--all]            # list proposals (default: open ones)
@@ -55,7 +58,13 @@ BUS = os.environ.get("MACHINE_BUS_DIR", os.path.join(os.path.expanduser("~"), "m
 ME  = os.environ.get("MACHINE_KEY", os.environ.get("COMPUTERNAME", os.environ.get("HOSTNAME", "unknown"))).strip()
 
 DEFAULTS = {"leader": "HUB-1", "round_cap": 3, "timeout_min": 30}
-TYPES = {"PROPOSE", "COUNTER", "ACCEPT", "REJECT", "COMMIT", "VERIFY", "ESCALATE", "HUMAN_APPROVED"}
+TYPES = {"PROPOSE", "COUNTER", "ACCEPT", "REJECT", "COMMIT", "LEADER_OVERRIDE", "VERIFY", "ESCALATE",
+         "HUMAN_APPROVED"}
+# A decision of record is either a COMMIT (reached through agreement, or a recorded human approval
+# on Tier-2) or a LEADER_OVERRIDE (the leader decided without agreement: disagree-and-commit, or a
+# manual commit on a proposal that was never agreed). Both close the proposal; the ledger keeps
+# them apart so an arbiter's call is never read back as consensus.
+DECISION_TYPES = ("COMMIT", "LEADER_OVERRIDE")
 
 # Tier-tripwire: deterministic keyword guard against TIER MIS-CLASSIFICATION (the top risk of
 # the whole design). The Tier-2 -> human-gate safety hinges on the agent labelling --tier
@@ -175,8 +184,28 @@ def _all_events():
                 continue
             seen.add(eid)
             out.append(ev)
-    out.sort(key=lambda e: e.get("ts", ""))
+    out.sort(key=_order_key)
     return out
+
+
+def _seq(ev):
+    try:
+        return int(ev.get("seq") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _order_key(ev):
+    """Projection order: the logical clock first, wall clock only as a tie-break.
+
+    `seq` is a Lamport counter (see _mkevent): every event a machine writes gets 1 + the highest
+    seq it has SEEN, so an event is always ordered after everything its writer had read when it
+    wrote it, whatever the two machines' clocks say. Wall-clock `ts` used to be the only key, and
+    a laptop running five minutes slow wrote an ACCEPT that sorted BEFORE the proposal it
+    accepted. `ts` now only breaks ties between concurrent events (same seq, neither saw the
+    other), then actor and event_id make the order total and identical on every machine.
+    Events written before seq existed carry seq 0 and keep their old ts order."""
+    return (_seq(ev), ev.get("ts", ""), ev.get("actor", ""), ev.get("event_id", ""))
 
 
 def _by_proposal():
@@ -187,8 +216,8 @@ def _by_proposal():
 
 
 def _state(evs):
-    """Derive the current state of one proposal from its merged, time-sorted events."""
-    evs = sorted(evs, key=lambda e: e.get("ts", ""))
+    """Derive the current state of one proposal from its merged events, in projection order."""
+    evs = sorted(evs, key=_order_key)
     prop = next((e for e in evs if e.get("type") == "PROPOSE"), evs[0])
     s = {
         "proposal_id": prop.get("proposal_id"),
@@ -199,19 +228,22 @@ def _state(evs):
         "rounds": sum(1 for e in evs if e.get("type") in ("PROPOSE", "COUNTER")),
         "accepts": sorted({e["actor"] for e in evs if e.get("type") == "ACCEPT"}),
         "verifies": sorted({e["actor"] for e in evs if e.get("type") == "VERIFY"}),
-        "committers": sorted({e["actor"] for e in evs if e.get("type") == "COMMIT"}),
+        "committers": sorted({e["actor"] for e in evs if e.get("type") in DECISION_TYPES}),
+        "overrides": sorted({e["actor"] for e in evs if e.get("type") == "LEADER_OVERRIDE"}),
         "events": evs,
         "last_ts": evs[-1].get("ts"),
     }
     # Causality-robust status (do NOT rely on the single "last event"): find the latest POSITION
     # on the table (PROPOSE or COUNTER); the side that did NOT make it can ACCEPT it. This handles
-    # both "responder accepts proposal" and "proposer accepts a counter" without ts fragility.
-    positions = [e for e in evs if e.get("type") in ("PROPOSE", "COUNTER")]
-    latest_pos = positions[-1] if positions else prop
-    pos_ts, owner = latest_pos.get("ts", ""), latest_pos.get("actor")
-    accept_after = [e for e in evs if e.get("type") == "ACCEPT"
-                    and e.get("actor") != owner and e.get("ts", "") >= pos_ts]
-    reject_after = [e for e in evs if e.get("type") == "REJECT" and e.get("ts", "") >= pos_ts]
+    # both "responder accepts proposal" and "proposer accepts a counter". "After" means after in
+    # projection order (logical clock), never a wall-clock comparison between two machines.
+    positions = [i for i, e in enumerate(evs) if e.get("type") in ("PROPOSE", "COUNTER")]
+    pos_i = positions[-1] if positions else evs.index(prop)
+    latest_pos = evs[pos_i]
+    owner = latest_pos.get("actor")
+    accept_after = [e for e in evs[pos_i + 1:] if e.get("type") == "ACCEPT"
+                    and e.get("actor") != owner]
+    reject_after = [e for e in evs[pos_i + 1:] if e.get("type") == "REJECT"]
     types = [e.get("type") for e in evs]
     # Guard #3 (anti split-brain): only ONE machine should ever apply+COMMIT a given proposal.
     # COMMITs from >1 distinct actor = the partition healed and two sides diverged -> conflict,
@@ -220,6 +252,8 @@ def _state(evs):
         s["status"] = "conflict"
     elif "COMMIT" in types:
         s["status"] = "committed"
+    elif "LEADER_OVERRIDE" in types:
+        s["status"] = "overridden"
     elif "ESCALATE" in types:
         s["status"] = "escalated"
     elif accept_after:
@@ -290,9 +324,16 @@ def _emit(ev, extra="", alert_human=False):
         _human_alert(line)
 
 
+def _next_seq():
+    """Lamport clock: 1 + the highest seq in any shard I can read. Monotonic per machine (my own
+    shard is part of what I read) and causal across machines (an answer always outranks the
+    position it answers)."""
+    return 1 + max([_seq(e) for e in _all_events()] or [0])
+
+
 def _mkevent(etype, proposal_id, **kw):
     ev = {"event_id": uuid.uuid4().hex, "proposal_id": proposal_id, "type": etype,
-          "actor": ME, "ts": _iso(_now())}
+          "actor": ME, "seq": _next_seq(), "ts": _iso(_now())}
     ev.update({k: v for k, v in kw.items() if v is not None})
     return ev
 
@@ -385,16 +426,28 @@ def cmd_commit(idfrag):
     s = _state(evs)
     if s["tier"] >= 2 and not _human_approvals(evs):
         print("REFUSED: Tier-2 needs a RECORDED human approval first -> `approve <id> \"<proof>\"`; auto-commit stays banned."); return 1
-    if s["status"] not in ("agreed",) and ME != _cfg()["leader"]:
+    leader = ME == _cfg()["leader"]
+    human_ok = s["tier"] >= 2 and bool(_human_approvals(evs))
+    if s["status"] == "agreed" or (human_ok and leader):
+        ev = _mkevent("COMMIT", pid, subject=s["subject"], text="decision of record; applying")
+        _append(ev)
+        print("COMMITTED #%s: %s  (now APPLY the change, then `verify`)" % (pid[:8], s["subject"]))
+        _emit(ev, extra="agent applies the change, then both VERIFY")
+        return 0
+    if not leader:
         print("not agreed yet (status=%s) and you are not the leader -> cannot commit." % s["status"]); return 1
-    ev = _mkevent("COMMIT", pid, subject=s["subject"], text="decision of record; applying")
+    # The leader may still decide (that is what a tie-break is), but it is NOT consensus and the
+    # ledger must say so: a separate event type, so an audit never counts it as an agreement.
+    ev = _mkevent("LEADER_OVERRIDE", pid, subject=s["subject"],
+                  text="leader override: decided without agreement (status was %s)" % s["status"])
     _append(ev)
-    print("COMMITTED #%s: %s  (now APPLY the change, then `verify`)" % (pid[:8], s["subject"]))
-    _emit(ev, extra="agent applies the change, then both VERIFY")
+    print("LEADER-OVERRIDE #%s: %s  (status was %s; this is the leader's call, not consensus)"
+          % (pid[:8], s["subject"], s["status"]))
+    _emit(ev, extra="leader override without agreement; peers may still VERIFY/object")
     return 0
 
 
-def cmd_verify(idfrag, proof):
+def cmd_verify(idfrag, proof, advisory=False):
     pid, evs = _resolve(idfrag)
     if not pid:
         return 2
@@ -407,7 +460,11 @@ def cmd_verify(idfrag, proof):
     if committer and ME == committer:
         print("   note: you COMMITTED #%s -> this is a SELF-verify; still needs an INDEPENDENT machine's verify." % pid[:8])
     if proof.strip() and proof.strip() in prior_proofs:
-        print("   ⚠️ RUBBER-STAMP GUARD: your proof duplicates a prior VERIFY verbatim -> re-check INDEPENDENTLY (re-run / re-read), don't copy.")
+        if not advisory:
+            print("REFUSED (rubber-stamp guard): your proof duplicates a prior VERIFY verbatim -> "
+                  "re-check INDEPENDENTLY (re-run / re-read) and write what YOU saw. Nothing recorded.")
+            return 1
+        print("   ⚠️ RUBBER-STAMP GUARD (advisory): your proof duplicates a prior VERIFY verbatim -> recorded anyway.")
     ev = _mkevent("VERIFY", pid, subject=s["subject"], proof=proof)
     _append(ev)
     after = sorted(set(s["verifies"]) | {ME})
@@ -492,7 +549,7 @@ def cmd_tick():
     acted = 0
     for pid, evs in groups.items():
         s = _state(evs)
-        if s["status"] in ("committed", "escalated", "rejected"):
+        if s["status"] in ("committed", "overridden", "escalated", "rejected"):
             continue
         overdue = now > _deadline(s, cfg)
         # 0) Guard #3: split-brain detected (>1 machine committed the same proposal) -> never
@@ -526,19 +583,21 @@ def cmd_tick():
         # 4) timeout with no response: Tier-0 + I am the leader -> disagree-and-commit (autonomy)
         if overdue and s["status"] == "proposed":
             if s["tier"] == 0 and ME == cfg["leader"]:
-                positions = [e for e in s["events"] if e.get("type") in ("PROPOSE", "COUNTER")]
-                latest = positions[-1] if positions else s["events"][0]
-                owner, pos_ts = latest.get("actor"), latest.get("ts", "")
-                mine_after = [e for e in s["events"] if e.get("type") == "ACCEPT"
-                              and e.get("actor") == ME and e.get("ts", "") >= pos_ts]
+                evl = s["events"]
+                positions = [i for i, e in enumerate(evl) if e.get("type") in ("PROPOSE", "COUNTER")]
+                pos_i = positions[-1] if positions else 0
+                owner = evl[pos_i].get("actor")
+                mine_after = [e for e in evl[pos_i + 1:] if e.get("type") == "ACCEPT"
+                              and e.get("actor") == ME]
                 if owner == ME:
                     # LOOP-FIX (a real incident: 17 identical self-ACCEPTs overnight): a
                     # self-accept NEVER counts in _state (accept must come from a non-owner), so
                     # tick re-accepted my own proposal every 20 min forever. Disagree-and-commit
-                    # on the leader's OWN tier-0 proposal = COMMIT directly (decision of record).
-                    print("#%s Tier-0 timeout on MY OWN proposal -> leader disagree-and-commit (COMMIT)" % pid[:8])
+                    # on the leader's OWN tier-0 proposal = decide directly. Nobody agreed, so the
+                    # record is a LEADER_OVERRIDE, not a COMMIT (issue #9, row C).
+                    print("#%s Tier-0 timeout on MY OWN proposal -> leader disagree-and-commit (LEADER_OVERRIDE)" % pid[:8])
                     if not os.environ.get("CONSENSUS_DRY"):
-                        ev = _mkevent("COMMIT", pid, subject=s["subject"],
+                        ev = _mkevent("LEADER_OVERRIDE", pid, subject=s["subject"],
                                       text="leader disagree-and-commit: own tier-0 proposal, no peer response by deadline")
                         _append(ev); _emit(ev, extra="tier-0 timeout tie-break; peer may still VERIFY/object")
                 elif mine_after:
@@ -618,7 +677,8 @@ def main():
     if cmd == "commit" and len(a) >= 2:
         return cmd_commit(a[1])
     if cmd == "verify" and len(a) >= 3:
-        return cmd_verify(a[1], " ".join(a[2:]))
+        rest = [x for x in a[2:] if x != "--advisory"]
+        return cmd_verify(a[1], " ".join(rest), advisory="--advisory" in a[2:])
     if cmd == "escalate" and len(a) >= 3:
         return cmd_escalate(a[1], " ".join(a[2:]))
     if cmd == "status" and len(a) >= 2:

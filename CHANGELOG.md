@@ -5,6 +5,29 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
+## v0.4.1 - 2026-10-14
+
+**Three documented guarantees of the reference engine are now enforced by code** (issue #9,
+rows D, C and E; found by an outside audit, re-checked by hand against `main`):
+
+- **D. The rubber-stamp guard refuses.** `verify` with a proof copied verbatim from a prior
+  VERIFY now exits 1 and records nothing. Before, it printed a warning and appended the VERIFY
+  anyway, which then counted toward "done". `--advisory` keeps the old behaviour, by name.
+- **C. A leader's unilateral call is `LEADER_OVERRIDE`, not `COMMIT`.** New event type and
+  status `overridden`. `commit` writes `COMMIT` only on `agreed` (or a human-approved Tier-2);
+  the leader committing anything else, and `tick`'s disagree-and-commit on its own proposal,
+  write `LEADER_OVERRIDE`. Split-brain detection counts both.
+- **E. Order is logical, not wall-clock.** Every event carries `seq` (a Lamport counter);
+  projection sorts by `(seq, ts, actor, event_id)`. A machine whose clock runs behind can no
+  longer write an ACCEPT that sorts before the proposal it accepts. Old events without `seq`
+  keep their `ts` order.
+- New `reference/_test_consensus_guarantees.py`: 10 tests, 6 of them shown red against the
+  pre-fix engine (`CONSENSUS_ENGINE=<old consensus.py>`), all green now. `demo/demo.py` is
+  unchanged and still passes all five scenarios.
+
+Not in this release: rows A (signature check on load) and B (signed human approval); they change
+the event format and ship separately.
+
 ## v0.4.0 - 2026-10-09
 
 **Agents can now join the fleet by one link.** New `fleet/` directory:

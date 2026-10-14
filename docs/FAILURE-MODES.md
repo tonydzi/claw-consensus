@@ -31,9 +31,9 @@ agreement when it comes from a machine that did **not** make the latest position
 never advanced the state, and the next tick did it again, forever.
 
 **Guard.** On a Tier-0 timeout of the leader's **own** proposal, the tie-break is
-now a direct `COMMIT` (decision of record), not a self-`ACCEPT`. A self-accept
+now a direct decision of record (`LEADER_OVERRIDE` since v0.4.1), not a self-`ACCEPT`. A self-accept
 that cannot advance state is never re-cast.
-[`reference/consensus.py` cmd_tick, the `owner == ME` branch](../reference/consensus.py#L534-L543)
+[`reference/consensus.py` cmd_tick, the `owner == ME` branch](../reference/consensus.py#L592-L602)
 
 **Lesson.** A retry that re-issues an action which provably cannot change state is
 an infinite loop with extra steps. Make the terminal action terminal.
@@ -50,7 +50,7 @@ the gate never fires.
 subject contains a dangerous verb (`delete`, `send`, `transfer`, `publish`,
 `revoke`, `.env`, ...), regardless of the label the agent chose. Safety no longer
 depends on the model getting the tier right.
-[`reference/consensus.py` _tripwire_hit](../reference/consensus.py#L89-L106)
+[`reference/consensus.py` _tripwire_hit](../reference/consensus.py#L98-L115)
 · demo scenario **C** fires this on `"delete the archived leads table"`.
 
 **Symptom (the scar).** The first tripwire matched substrings, so the identifier
@@ -81,7 +81,7 @@ aborted the parse of the rest.
 
 **Guard.** The reader parses **per line, not per file**. A line that fails to parse
 is skipped; the events around it are still read.
-[`reference/consensus.py` _all_events](../reference/consensus.py#L155-L179)
+[`reference/consensus.py` _all_events](../reference/consensus.py#L164-L188)
 · demo scenario **E** injects `{"event_id": "partial-write-junk", "type": "COMM`
 into a shard and proves the `COMMIT` written after it is still read.
 
@@ -100,8 +100,8 @@ owned the apply, and committed. When the partition healed, two conflicting
 one proposal is detected on merge and marked `conflict` - never silently
 "committed". `tick` escalates it to the human for reconciliation; the leader's log
 is authoritative.
-[`_state` split-brain check](../reference/consensus.py#L216-L220)
-· [`cmd_tick` conflict escalation](../reference/consensus.py#L498-L507)
+[`_state` split-brain check](../reference/consensus.py#L251-L256)
+· [`cmd_tick` conflict escalation](../reference/consensus.py#L557-L564)
 · demo scenario **D** partitions the ledger, commits on both islands, heals, and
 shows `tick` catch it.
 
@@ -126,9 +126,9 @@ in a new costume.
 
 **Guard.** "Globally done" requires **>=2 distinct verifiers, at least one of which
 is not the committer.** The applier may self-verify, but an independent machine
-must re-check. A rubber-stamp guard also rejects a proof that duplicates a prior
+must re-check. A rubber-stamp guard also refuses (exit 1, nothing recorded) a proof that duplicates a prior
 verify verbatim (copy-paste is not a re-check).
-[`reference/consensus.py` cmd_verify](../reference/consensus.py#L397-L426)
+[`reference/consensus.py` cmd_verify](../reference/consensus.py#L450-L483)
 
 **Lesson.** Verification by the party that did the work is a status update, not a
 check. Independence is the whole value.
@@ -144,8 +144,8 @@ way into the ledger and the proposal sat `escalated` permanently.
 **Guard.** An `approve <id> "<proof>"` verb records the human OK as a first-class
 event (with a required who/where/msg-id proof string). `commit` then allows Tier-2
 **only** with a recorded approval; auto-commit without it stays banned.
-[`cmd_approve`](../reference/consensus.py#L360-L378)
-· [`cmd_commit` Tier-2 gate](../reference/consensus.py#L381-L394)
+[`cmd_approve`](../reference/consensus.py#L401-L419)
+· [`cmd_commit` Tier-2 gate](../reference/consensus.py#L422-L447)
 · demo scenario **B** shows the refusal, the approval, then the successful commit.
 
 **Lesson.** A human gate needs an *exit*, not just an entrance. A safety stop with
@@ -161,7 +161,7 @@ happened first, producing a wrong state.
 
 **Guard.** Timestamps carry **microseconds**, which breaks same-second ties by real
 order.
-[`reference/consensus.py` _iso](../reference/consensus.py#L134-L137)
+[`reference/consensus.py` _iso](../reference/consensus.py#L143-L146)
 
 **Lesson.** If your ordering key has coarser resolution than your event rate, you
 are sorting by luck.
@@ -178,7 +178,7 @@ missed it.
 channel** (configured via `HUMAN_ALERT_CMD`), kept strictly for the two cases a
 human must answer: a Tier-2 action and a true deadlock. Routine traffic never
 touches it.
-[`reference/consensus.py` _human_alert](../reference/consensus.py#L261-L277)
+[`reference/consensus.py` _human_alert](../reference/consensus.py#L295-L311)
 
 **Lesson.** An alert channel that also carries noise is not an alert channel.
 
@@ -199,7 +199,7 @@ back - peers re-sync the newer watermark.
 **Why it is not in the reference.** This is slashing-protection against a
 fleet-operations incident (backup restores, accidental double instances) rather
 than a property of the protocol itself. The published
-[`_append`](../reference/consensus.py#L149-L152) ships the simple single-writer
+[`_append`](../reference/consensus.py#L158-L161) ships the simple single-writer
 append so the reference stays minimal and easy to audit. If you run more than a
 couple of machines with automated backups, add the watermark; the incident it
 prevents is real.

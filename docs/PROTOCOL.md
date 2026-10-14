@@ -17,18 +17,19 @@ Source of truth = `<bus>/_decisions/log-<MACHINE>.jsonl`, one shard per machine.
 - Readers **merge all shards**, group events by `proposal_id`, and **dedup by `event_id`**. A duplicate delivery over the redundant rails is a no-op by design.
 - Parse **per line, not per file**: one corrupt line (partial write, sync-conflict junk) must not silently drop every event after it. This was a real bug.
 - Timestamps carry **microseconds**. Two events in the same second used to sort by shard filename instead of by causality; that was a real bug too.
+- **Order is logical, not wall-clock.** Every event carries `seq`, a Lamport counter: the writer stamps 1 + the highest `seq` it can read in any shard. An answer therefore always sorts after the position it answers, even when the answering machine's clock runs minutes behind. Projection order is `(seq, ts, actor, event_id)`: `ts` only breaks ties between concurrent events, and the last two keys make the order total and identical on every machine. Events written before `seq` existed read as `seq` 0 and keep their old `ts` order. (Issue #9, row E: a laptop five minutes slow used to write an ACCEPT that sorted before the PROPOSE it accepted, and the proposal never reached `agreed`.)
 
 Event shape:
 
 ```json
 {"event_id": "1f0c...", "proposal_id": "9a2b...", "type": "PROPOSE",
- "actor": "HUB-1", "ts": "2026-07-02T10:15:03.412000Z",
+ "actor": "HUB-1", "seq": 41, "ts": "2026-07-02T10:15:03.412000Z",
  "subject": "adopt nightly reindex at 03:30", "risk_tier": 0}
 ```
 
 ## §3. Verbs and state machine
 
-Event types: `PROPOSE`, `COUNTER`, `ACCEPT`, `REJECT`, `COMMIT`, `VERIFY`, `ESCALATE`, `HUMAN_APPROVED`.
+Event types: `PROPOSE`, `COUNTER`, `ACCEPT`, `REJECT`, `COMMIT`, `LEADER_OVERRIDE`, `VERIFY`, `ESCALATE`, `HUMAN_APPROVED`.
 
 ```
 PROPOSE ──> proposed ──ACCEPT(by non-owner)──> agreed ──COMMIT──> committed ──VERIFY x2──> done
@@ -37,12 +38,16 @@ PROPOSE ──> proposed ──ACCEPT(by non-owner)──> agreed ──COMMIT�
    │            │
    │         REJECT ──> rejected
    │
+   ├─ not agreed, leader decides ──LEADER_OVERRIDE──> overridden ──VERIFY x2──> done
+   │
    └─ tier>=2 ──> escalated ──HUMAN_APPROVED──> commit unlocked
 ```
 
+**`COMMIT` vs `LEADER_OVERRIDE`.** `COMMIT` is written only when the proposal is `agreed`, or when a Tier-2 proposal carries a recorded human approval (the human decided). When the leader decides anything else (a manual `commit` on a proposal nobody accepted, or `tick`'s disagree-and-commit), the event is `LEADER_OVERRIDE` and the status is `overridden`. Both close the proposal and both count for split-brain detection; the ledger keeps them apart so an arbiter's call is never read back as consensus. A non-leader still cannot commit an unagreed proposal at all.
+
 Status is derived from the merged event set, never stored. Two subtleties that bit us:
 
-- **Causality-robust acceptance.** Don't look at "the last event". Find the latest POSITION on the table (`PROPOSE` or `COUNTER`); only an `ACCEPT` from a machine that did NOT make that position, at or after its timestamp, counts. This handles both "responder accepts proposal" and "proposer accepts a counter" without timestamp fragility.
+- **Causality-robust acceptance.** Don't look at "the last event". Find the latest POSITION on the table (`PROPOSE` or `COUNTER`); only an `ACCEPT` from a machine that did NOT make that position, after it in projection order (§2), counts. This handles both "responder accepts proposal" and "proposer accepts a counter" without timestamp fragility.
 - **A self-accept never counts.** The owner of the current position cannot accept it. See §6 for the infinite loop this prevents.
 
 After `COMMIT`, the ledger records the decision; the AGENT applies the actual change (the engine never edits user files). Then both sides `verify`.
@@ -70,7 +75,7 @@ Tripwire lesson: word-start matching, not plain substring. The term `send` used 
 3. **Agreed but uncommitted** -> remind the responsible actor.
 4. **Round cap hit** (default 3 PROPOSE/COUNTER rounds) without agreement -> escalate to the human. Two well-prompted agents that haven't converged in 3 rounds won't converge in 30; more rounds just burn tokens and delay the human's involvement. Machines must not filibuster.
 5. **Timeout with no response:**
-   - Tier-0 and I am the leader -> **disagree-and-commit**: the leader accepts (or commits its own proposal) and moves on. The peer may still VERIFY and object after the fact. Autonomy beats stalling for safe actions.
+   - Tier-0 and I am the leader -> **disagree-and-commit**: the leader accepts (or, on its own proposal, records a `LEADER_OVERRIDE`) and moves on. The peer may still VERIFY and object after the fact. Autonomy beats stalling for safe actions.
    - Any other tier -> escalate. Only Tier-0 auto-resolves.
 
 Timeouts respect a **per-peer SLA** (`peer_timeout_min` in the config): a sleeping laptop gets a longer window than the always-on hub, otherwise every proposal made during the night dies to timeout before the laptop wakes.
@@ -79,9 +84,9 @@ Timeouts respect a **per-peer SLA** (`peer_timeout_min` in the config): a sleepi
 
 ## §6. The three guards (each one paid for by a real incident)
 
-**Guard 1: the self-accept loop.** The leader proposed something, the peer never answered, and every 20 minutes the tick auto-accepted the leader's OWN proposal, which never counts, forever. 17 identical ACCEPTs by morning. Fixes: a self-accept never advances state (§3); the leader's tie-break on its OWN proposal is a direct COMMIT, not another ACCEPT; and if my ACCEPT is already on the table but the state hasn't advanced, escalate the anomaly instead of re-spamming.
+**Guard 1: the self-accept loop.** The leader proposed something, the peer never answered, and every 20 minutes the tick auto-accepted the leader's OWN proposal, which never counts, forever. 17 identical ACCEPTs by morning. Fixes: a self-accept never advances state (§3); the leader's tie-break on its OWN proposal is a direct decision (`LEADER_OVERRIDE` since v0.4.1, `COMMIT` before), not another ACCEPT; and if my ACCEPT is already on the table but the state hasn't advanced, escalate the anomaly instead of re-spamming.
 
-**Guard 2: independent verification.** The machine that applied the change may self-verify, but "globally done" requires at least one VERIFY from a machine that did NOT apply it. A **rubber-stamp guard** flags a proof string that duplicates a prior VERIFY verbatim: re-check independently, don't copy the other machine's homework.
+**Guard 2: independent verification.** The machine that applied the change may self-verify, but "globally done" requires at least one VERIFY from a machine that did NOT apply it. A **rubber-stamp guard** refuses a proof string that duplicates a prior VERIFY verbatim: `verify` exits 1 and records nothing, so a copied proof can never be counted toward "done". Re-check independently, don't copy the other machine's homework. `verify ... --advisory` keeps the pre-v0.4.1 behaviour (warn, record anyway) for anyone who needs it; it is advisory by name because it no longer guards anything. (Before v0.4.1 the guard only printed a warning and appended the VERIFY regardless; issue #9, row D.)
 
 **Guard 3: split-brain detection.** Only one machine should ever apply+COMMIT a given proposal. If the merged ledger shows COMMITs from more than one actor, the network partitioned, both sides decided alone, and the partition then healed. That state is `conflict`, never silently "committed", and it always escalates to the human for reconciliation (the leader's log is authoritative as a starting point).
 
