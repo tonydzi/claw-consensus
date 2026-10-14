@@ -5,6 +5,47 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
+## v0.5.0 - 2026-10-14
+
+**The trust boundary is now in the code, not in the honesty of whoever writes a ledger line**
+(issue #9, rows A and B). Changes the event format, hence the minor bump.
+
+- **B. Human approval is a signed envelope.** `approve <id> "<proof>"` is gone: a free-text
+  proof is refused (exit 2). New verbs: `approval-request <id>` prints the envelope
+  (`human_principal`, `proposal_id`, `action_digest`, `expires_at`, `nonce`), the human signs it
+  on their own device with `sign-approval ... --key`, and `approve <id> --envelope` records it.
+  Refused, with the reason printed: unknown principal, bad or missing signature, another
+  proposal, changed action (a COUNTER after the approval voids it), expired, replayed nonce.
+  New config `human_principals`; human keys pinned with `CONSENSUS_HUMAN_SIGNERS_DIR`. **Migration:** a legacy free-text `HUMAN_APPROVED` no longer
+  unlocks `commit`; re-approve open Tier-2 proposals with a signed envelope.
+- **A. Signatures are checked on load.** `consensus.py` signs every event it writes when the
+  machine has a fleet key (`fleet_sign.py init`) and checks every line before projection: bad
+  signature or a key signing for another machine → quarantine always; unsigned → quarantine
+  once `sig_enforce_after` is set (`"*"` = strict, recommended once every machine signs).
+  `status`/`list` print a `ledger trust:` line and every `QUARANTINE` row; unparsable lines are
+  now listed too instead of skipped silently. Good verdicts are cached locally per registry
+  fingerprint. Default stays **dark** (unsigned trusted, and the status line says `DARK`), per
+  the documented rollout order; existing ledgers read as before.
+- `fleet_sign.py`: `sign_bytes`/`verify_bytes` take a namespace (`fleet-approval` for humans)
+  and `sign_bytes` an explicit key; `registry_fingerprint()`.
+- `protocol_guards.sig_enforced`: `"*"` = strict, and a malformed `ts` is never grandfathered
+  (a forged line could set `ts: "!"`, which sorts before any real timestamp).
+- Env pins for machines that trust the shared config less than themselves:
+  `CONSENSUS_SIG_ENFORCE_AFTER`, `CONSENSUS_HUMAN_PRINCIPALS`.
+- `demo/demo.py`: scenario B now goes through the signed envelope and shows the free-text
+  approve refused; new scenario F forges a line under strict mode and shows it quarantined. Each
+  simulated machine gets its own key dir inside the temp bus.
+- **Hardened after an adversarial review of the first cut** (each attack reproduced first, each
+  now a test that was red on that cut): a bus writer could swap `signers/OWNER.pub` and sign as
+  the owner → `CONSENSUS_HUMAN_SIGNERS_DIR` pins human keys locally (`FLEET_SIGNERS_DIR` does the
+  same for machine keys), and `approve` says when the key is unpinned; an expired envelope
+  appended by hand as `HUMAN_APPROVED` unlocked commit → expiry and nonce are re-checked on the
+  ledger at commit time, so an approval must be used before it expires; `sig_enforce_after:
+  true` disabled enforcement → unreadable values fail closed as strict. Malformed lines now go
+  to the quarantine (`malformed`) instead of being skipped.
+- `reference/_test_consensus_guarantees.py`: 31 tests. Against v0.4.1 the 15 new ones fail;
+  all 31 pass now. New failure mode **N**.
+
 ## v0.4.1 - 2026-10-14
 
 **Three documented guarantees of the reference engine are now enforced by code** (issue #9,
