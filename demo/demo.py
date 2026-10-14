@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """demo.py - reproducible, offline demonstration of the consensus engine.
 
-Runs the PUBLISHED reference engine (../reference/consensus.py) through five
+Runs the PUBLISHED reference engine (../reference/consensus.py) through six
 scenarios on ONE host, simulating two machines by flipping the MACHINE_KEY env
 between calls. No network, no chat rail, no LLM, no packages -- it sets
 CONSENSUS_NO_BUS=1 so every step is a pure local file operation. What you are
@@ -13,10 +13,14 @@ timing is the engine's own deterministic work, end to end.
 
 Scenarios
   A  happy path      propose -> counter -> accept -> commit -> verify x2 -> DONE
-  B  human gate      Tier-2 auto-escalates; commit REFUSED until `approve`
+  B  human gate      Tier-2 auto-escalates; commit REFUSED until a SIGNED human approval
   C  tier-tripwire   an innocuous-looking Tier-0 subject is force-bumped to Tier-2
   D  split-brain     two machines commit the same proposal -> conflict, escalated
   E  corrupt line    a garbage line in a shard does NOT eat the events after it
+  F  forged line     with signatures enforced, a hand-written line is quarantined, not state
+
+B and F need `ssh-keygen` (OpenSSH, ships with Git for Windows, macOS and Linux). Without it
+they print SKIP and say why; they never pass silently on a machine that cannot sign.
 
 Exit code is 0 only if every scenario's end-state matches expectation, so this
 file doubles as the engine's integration test. Numbers vary per machine; the
@@ -34,24 +38,47 @@ import subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 ENGINE = os.path.join(ROOT, "reference", "consensus.py")
+SIGNER = os.path.join(ROOT, "reference", "fleet_sign.py")
+sys.path.insert(0, os.path.join(ROOT, "reference"))
+import fleet_sign  # noqa: E402  (only for locating a working ssh-keygen)
 
 HUB = "HUB-1"        # the always-on leader (matches docs default)
 LAPTOP = "LAPTOP-2"  # a sleeping peer
 
 
-def seed_config(bus_dir):
+def seed_config(bus_dir, **extra):
     """Give a bus dir the same leader config the docs quickstart uses."""
     os.makedirs(os.path.join(bus_dir, "_decisions"), exist_ok=True)
+    cfg = {"leader": HUB, "round_cap": 3, "timeout_min": 30}
+    cfg.update(extra)
     with open(os.path.join(bus_dir, "_decisions", "consensus.json"), "w",
               encoding="utf-8") as fh:
-        json.dump({"leader": HUB, "round_cap": 3, "timeout_min": 30}, fh)
+        json.dump(cfg, fh)
+
+
+def machine_env(machine, bus):
+    """Env of one simulated machine. LOCALAPPDATA is per machine and inside the temp bus, so each
+    simulated machine has its own private key dir and never touches a real key on this host."""
+    env = dict(os.environ)
+    env["MACHINE_KEY"] = machine
+    env["MACHINE_BUS_DIR"] = bus
+    env["LOCALAPPDATA"] = os.path.join(bus, "_local", machine)
+    for k in ("CONSENSUS_SIG_ENFORCE_AFTER", "CONSENSUS_HUMAN_PRINCIPALS", "FLEET_SIGN_DISABLE"):
+        env.pop(k, None)
+    return env
+
+
+def have_ssh_keygen():
+    try:
+        subprocess.run([fleet_sign._ssh_keygen(), "-h"], capture_output=True, timeout=20)
+        return True
+    except Exception:
+        return False
 
 
 def invoke(machine, bus, args, expect=0):
     """Run the engine CLI as `machine` against `bus`; return (ms, proc)."""
-    env = dict(os.environ)
-    env["MACHINE_KEY"] = machine
-    env["MACHINE_BUS_DIR"] = bus
+    env = machine_env(machine, bus)
     env["CONSENSUS_NO_BUS"] = "1"          # offline: no chat rail, no network
     env["PYTHONIOENCODING"] = "utf-8"
     env.pop("CONSENSUS_DRY", None)
@@ -82,6 +109,10 @@ class Runner:
                            "args": list(args), "ms": round(ms, 1),
                            "exit": p.returncode, "out": (p.stdout or "").strip()})
         return p
+
+    def full_id(self, short):
+        """The full proposal id behind a short one (the forged line must name it exactly)."""
+        return next(e["proposal_id"] for e in self.events() if e["proposal_id"].startswith(short))
 
     def propose_id(self, p):
         """Pull the 8-char short id the engine printed on PROPOSE."""
@@ -160,26 +191,53 @@ def scenario_a(bus):
     return {"name": "A happy-path", "pass": ok, "total_ms": total, "steps": r.steps}
 
 
+def skipped(name, why):
+    print("\n  SKIP: %s" % why)
+    return {"name": name, "pass": True, "skipped": why, "total_ms": 0.0, "steps": []}
+
+
 def scenario_b(bus):
-    hdr("B. HUMAN GATE  Tier-2 auto-escalates; commit REFUSED until approve")
+    hdr("B. HUMAN GATE  Tier-2 auto-escalates; commit REFUSED until a SIGNED human approval")
+    if not have_ssh_keygen():
+        return skipped("B human-gate", "no ssh-keygen here, a human approval cannot be signed")
     r = Runner(bus)
+    seed_config(bus, human_principals=["OWNER"])
+    # the human's own key: lives on THEIR device; only the public half is in the bus registry
+    human = os.path.join(bus, "_owner_phone")
+    os.makedirs(human)
+    key = os.path.join(human, "owner_ed25519")
+    subprocess.run([fleet_sign._ssh_keygen(), "-q", "-t", "ed25519", "-N", "", "-C", "OWNER",
+                    "-f", key], check=True, capture_output=True, timeout=60)
+    signers = os.path.join(bus, "_engine", "signers")
+    os.makedirs(signers)
+    shutil.copy(key + ".pub", os.path.join(signers, "OWNER.pub"))
+
     p = r.run(HUB, "propose", "rotate the production API token", "--tier", "2")
     pid = r.propose_id(p)
-    # commit must be REFUSED (no recorded human approval yet) -> exit 1
-    r.run(HUB, "commit", pid, expect=1)
-    r.run(HUB, "approve", pid, "owner approved, alerts-channel msg 1790183")
+    r.run(HUB, "commit", pid, expect=1)          # no approval yet -> REFUSED
+    # a typed "the owner said yes" is not an approval any more -> REFUSED
+    r.run(HUB, "approve", pid, "owner approved, alerts-channel msg 1790183", expect=2)
+    req = r.run(HUB, "approval-request", pid, "--ttl-min", "15")
+    with open(os.path.join(human, "ask.json"), "w", encoding="utf-8") as fh:
+        fh.write(req.stdout)
+    signed = os.path.join(human, "signed.json")
+    r.run("OWNER-PHONE", "sign-approval", os.path.join(human, "ask.json"),
+          "--key", key, "--out", signed)
+    r.run(HUB, "approve", pid, "--envelope", signed)
     r.run(HUB, "commit", pid)
     r.run(HUB, "verify", pid, "token rotated, old key revoked")
     total = trace_table(r.steps)
     ev = r.events()
     has_escalate = any(e["type"] == "ESCALATE" for e in ev)
-    has_human = any(e["type"] == "HUMAN_APPROVED" for e in ev)
+    approvals = [e for e in ev if e["type"] == "HUMAN_APPROVED"]
+    has_human = len(approvals) == 1 and approvals[0].get("approval", {}).get("sig")
     committed = any(e["type"] == "COMMIT" for e in ev)
-    refused = r.steps[1]["exit"] == 1
-    ok = has_escalate and refused and has_human and committed
+    refused = r.steps[1]["exit"] == 1 and r.steps[2]["exit"] == 2
+    ok = bool(has_escalate and refused and has_human and committed)
     print("\n  end-state: auto-escalated=%s  commit-refused-before-approve=%s  "
-          "approved+committed=%s -> %s"
-          % (has_escalate, refused, has_human and committed, "GATE HELD" if ok else "UNEXPECTED"))
+          "free-text-approve-refused=%s  signed-approval+committed=%s -> %s"
+          % (has_escalate, r.steps[1]["exit"] == 1, r.steps[2]["exit"] == 2,
+             bool(has_human and committed), "GATE HELD" if ok else "UNEXPECTED"))
     return {"name": "B human-gate", "pass": ok, "total_ms": total, "steps": r.steps}
 
 
@@ -269,6 +327,34 @@ def scenario_e(bus):
     return {"name": "E corrupt-line", "pass": ok, "total_ms": total, "steps": r.steps}
 
 
+def scenario_f(bus):
+    hdr("F. FORGED LINE  signatures enforced: a hand-written line is quarantined, not state")
+    if not have_ssh_keygen():
+        return skipped("F forged-line", "no ssh-keygen here, machines cannot sign")
+    r = Runner(bus)
+    seed_config(bus, sig_enforce_after="*")       # strict: every line must be signed
+    for m in (HUB, LAPTOP):                        # each machine makes its own key
+        subprocess.run([sys.executable, SIGNER, "init"], env=machine_env(m, bus),
+                       check=True, capture_output=True, timeout=120)
+    p = r.run(HUB, "propose", "add a health dashboard tile", "--tier", "0")
+    pid = r.propose_id(p)
+    # anyone who can write the shared folder drops a line claiming the laptop accepted
+    forged = {"event_id": "forged-1", "proposal_id": r.full_id(pid), "type": "ACCEPT",
+              "actor": LAPTOP, "seq": 99, "ts": "2026-07-11T00:00:00.000000Z", "text": "ok"}
+    with open(os.path.join(bus, "_decisions", "log-attacker.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps(forged) + "\n")
+    st1 = r.run(HUB, "status", pid)
+    r.run(LAPTOP, "respond", pid, "accept", "ok, really")   # the real, signed accept
+    st2 = r.run(HUB, "status", pid)
+    total = trace_table(r.steps)
+    held = "[PROPOSED]" in st1.stdout and "QUARANTINE" in st1.stdout
+    agreed = "[AGREED]" in st2.stdout
+    ok = held and agreed
+    print("\n  end-state: forged ACCEPT quarantined=%s, real signed ACCEPT -> agreed=%s -> %s"
+          % (held, agreed, "FORGERY REFUSED" if ok else "UNEXPECTED"))
+    return {"name": "F forged-line", "pass": ok, "total_ms": total, "steps": r.steps}
+
+
 def microbench(bus):
     """Pure-engine latency: how long the state derivation itself takes, in-process,
     with zero process-startup cost, over a realistic ledger (50 proposals, ~6 events
@@ -343,6 +429,7 @@ def main():
         results.append(scenario_c(os.path.join(root_tmp, "c")))
         results.append(scenario_d(os.path.join(root_tmp, "d")))
         results.append(scenario_e(os.path.join(root_tmp, "e")))
+        results.append(scenario_f(os.path.join(root_tmp, "f")))
         bench = microbench(os.path.join(root_tmp, "bench"))
 
         hdr("SUMMARY")
@@ -350,8 +437,8 @@ def main():
         for r in results:
             allpass = allpass and r["pass"]
             print("  [%s]  %-16s  %7.1f ms  (%d CLI calls)"
-                  % ("PASS" if r["pass"] else "FAIL", r["name"], r["total_ms"],
-                     len(r["steps"])))
+                  % ("SKIP" if r.get("skipped") else "PASS" if r["pass"] else "FAIL",
+                     r["name"], r["total_ms"], len(r["steps"])))
         print("\n  core compute: %s" % bench)
         print("  LLM calls across the whole demo: 0        tokens: 0")
         print("  every number above is deterministic file I/O + Python startup")

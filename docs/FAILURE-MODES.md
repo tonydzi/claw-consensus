@@ -33,7 +33,7 @@ never advanced the state, and the next tick did it again, forever.
 **Guard.** On a Tier-0 timeout of the leader's **own** proposal, the tie-break is
 now a direct decision of record (`LEADER_OVERRIDE` since v0.4.1), not a self-`ACCEPT`. A self-accept
 that cannot advance state is never re-cast.
-[`reference/consensus.py` cmd_tick, the `owner == ME` branch](../reference/consensus.py#L657-L667)
+[`reference/consensus.py` cmd_tick, the `owner == ME` branch](../reference/consensus.py#L931-L941)
 
 **Lesson.** A retry that re-issues an action which provably cannot change state is
 an infinite loop with extra steps. Make the terminal action terminal.
@@ -50,7 +50,7 @@ the gate never fires.
 subject contains a dangerous verb (`delete`, `send`, `transfer`, `publish`,
 `revoke`, `.env`, ...), regardless of the label the agent chose. Safety no longer
 depends on the model getting the tier right.
-[`reference/consensus.py` _tripwire_hit](../reference/consensus.py#L98-L115)
+[`reference/consensus.py` _tripwire_hit](../reference/consensus.py#L123-L140)
 · demo scenario **C** fires this on `"delete the archived leads table"`.
 
 **Symptom (the scar).** The first tripwire matched substrings, so the identifier
@@ -81,7 +81,7 @@ aborted the parse of the rest.
 
 **Guard.** The reader parses **per line, not per file**. A line that fails to parse
 is skipped; the events around it are still read.
-[`reference/consensus.py` _all_events](../reference/consensus.py#L164-L195)
+[`reference/consensus.py` _all_events](../reference/consensus.py#L266-L321)
 · demo scenario **E** injects `{"event_id": "partial-write-junk", "type": "COMM`
 into a shard and proves the `COMMIT` written after it is still read.
 
@@ -100,8 +100,8 @@ owned the apply, and committed. When the partition healed, two conflicting
 one proposal is detected on merge and marked `conflict` - never silently
 "committed". `tick` escalates it to the human for reconciliation; the leader's log
 is authoritative.
-[`_state` split-brain check](../reference/consensus.py#L281-L291)
-· [`cmd_tick` conflict escalation](../reference/consensus.py#L624-L629)
+[`_state` split-brain check](../reference/consensus.py#L422-L432)
+· [`cmd_tick` conflict escalation](../reference/consensus.py#L898-L903)
 · demo scenario **D** partitions the ledger, commits on both islands, heals, and
 shows `tick` catch it.
 
@@ -128,7 +128,7 @@ in a new costume.
 is not the committer.** The applier may self-verify, but an independent machine
 must re-check. A rubber-stamp guard also refuses (exit 1, nothing recorded) a proof that duplicates a prior
 verify verbatim (copy-paste is not a re-check).
-[`reference/consensus.py` cmd_verify](../reference/consensus.py#L513-L550)
+[`reference/consensus.py` cmd_verify](../reference/consensus.py#L785-L822)
 
 **Lesson.** Verification by the party that did the work is a status update, not a
 check. Independence is the whole value.
@@ -141,11 +141,12 @@ check. Independence is the whole value.
 in chat, and then... nothing. `commit` hard-refused Tier-2, so the approval had no
 way into the ledger and the proposal sat `escalated` permanently.
 
-**Guard.** An `approve <id> "<proof>"` verb records the human OK as a first-class
-event (with a required who/where/msg-id proof string). `commit` then allows Tier-2
-**only** with a recorded approval; auto-commit without it stays banned.
-[`cmd_approve`](../reference/consensus.py#L464-L482)
-· [`cmd_commit` Tier-2 gate](../reference/consensus.py#L485-L510)
+**Guard.** An `approve` verb records the human OK as a first-class event. `commit`
+then allows Tier-2 **only** with a recorded approval; auto-commit without it stays
+banned. (The first version took a free-text proof string; since v0.5.0 it takes only
+a signed approval envelope, see **N**.)
+[`cmd_approve`](../reference/consensus.py#L716-L753)
+· [`cmd_commit` Tier-2 gate](../reference/consensus.py#L756-L782)
 · demo scenario **B** shows the refusal, the approval, then the successful commit.
 
 **Lesson.** A human gate needs an *exit*, not just an entrance. A safety stop with
@@ -161,7 +162,7 @@ happened first, producing a wrong state.
 
 **Guard.** Timestamps carry **microseconds**, which breaks same-second ties by real
 order.
-[`reference/consensus.py` _iso](../reference/consensus.py#L143-L146)
+[`reference/consensus.py` _iso](../reference/consensus.py#L168-L171)
 
 **Lesson.** If your ordering key has coarser resolution than your event rate, you
 are sorting by luck.
@@ -178,7 +179,7 @@ missed it.
 channel** (configured via `HUMAN_ALERT_CMD`), kept strictly for the two cases a
 human must answer: a Tier-2 action and a true deadlock. Routine traffic never
 touches it.
-[`reference/consensus.py` _human_alert](../reference/consensus.py#L358-L374)
+[`reference/consensus.py` _human_alert](../reference/consensus.py#L499-L515)
 
 **Lesson.** An alert channel that also carries noise is not an alert channel.
 
@@ -199,7 +200,7 @@ back - peers re-sync the newer watermark.
 **Why it is not in the reference.** This is slashing-protection against a
 fleet-operations incident (backup restores, accidental double instances) rather
 than a property of the protocol itself. The published
-[`_append`](../reference/consensus.py#L158-L161) ships the simple single-writer
+[`_append`](../reference/consensus.py#L183-L202) ships the simple single-writer
 append so the reference stays minimal and easy to audit. If you run more than a
 couple of machines with automated backups, add the watermark; the incident it
 prevents is real.
@@ -326,6 +327,33 @@ a third and cheapest one aimed at a single named item, rather than the one whose
 
 **Lesson.** A silent instrument is worse than a missing one: a missing instrument is visible, and
 false calm is not. "Look at it yourself" is not a verdict.
+
+---
+
+## N. Guarantees the docs promised and the code did not keep **[outside audit]**
+
+**Symptom.** None in the demo, which is the point. An outside audit (two independent deep-research
+passes, 14 Oct 2026, issue #9) read `docs/` against `reference/consensus.py` and found five
+promises the engine did not enforce: (A) events "signed per machine", but nothing verified a
+signature on load, so any line in any `log-*.jsonl` became state; (B) Tier-2 needs a *human*, but
+`approve` accepted any non-empty string; (C) consensus means agreement, but the leader's
+unilateral commit was the same `COMMIT` event; (D) a rubber-stamp guard that only printed a
+warning and recorded the copied proof anyway; (E) "deterministic projection", ordered by each
+machine's own wall clock.
+
+**Root cause.** Each guarantee was written down when its mechanism was designed and then tested
+only on the honest path: every demo scenario had well-behaved machines with synchronized clocks.
+A guarantee that no test tries to break is a description, not a guard.
+
+**Guard.** One test per guarantee in
+[`reference/_test_consensus_guarantees.py`](../reference/_test_consensus_guarantees.py), each
+shown red against the pre-fix engine before the fix landed: rubber-stamp refusal and
+`LEADER_OVERRIDE` and a Lamport `seq` (v0.4.1); signed approval envelopes and signature checks on
+load with a printed quarantine (v0.5.0). Demo scenario **F** forges a line and watches it get
+quarantined.
+
+**Lesson.** For every sentence in the docs that starts "the engine guarantees", there should be a
+test that plays the attacker. If it cannot be written, the sentence is a hope.
 
 ---
 

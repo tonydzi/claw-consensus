@@ -35,7 +35,11 @@ Verbs:
   list    [--open|--all]            # list proposals (default: open ones)
   tick                              # deterministic driver: timeouts, round-cap, tie-break, Tier-2 gate
   pending [--json]                  # 0-LLM detector: open proposals AWAITING MY RESPONSE (judge work-list)
-  approve <id> "<proof>"            # record the HUMAN's OK (who/where/msg-id) -> unlocks commit for tier-2
+  approval-request <id> [--principal NAME] [--ttl-min 15]
+                                    # print the approval envelope a human must sign for this proposal
+  sign-approval <envelope.json> --key <private key> [--out file]
+                                    # (on the HUMAN's device) sign that envelope with their own key
+  approve <id> --envelope <file|json>  # record a SIGNED human approval -> unlocks commit for tier-2
 
 Env: MACHINE_KEY / COMPUTERNAME = me; MACHINE_BUS_DIR = bus root; CONSENSUS_NO_BUS=1 skips the
 dual-send (tests); HUMAN_ALERT_CMD = optional command (one text arg) that pings a DEDICATED
@@ -44,8 +48,26 @@ question drowns in heartbeats). Config <bus>/_decisions/consensus.json overrides
 leader/round_cap/timeout_min; optional "peer_timeout_min": {"<MACHINE>": min} = per-machine SLA
 (a sleeping laptop gets a longer window than the always-on hub) -- effective deadline = slowest
 peer we are WAITING ON.
+
+Trust (issue #9, rows A and B):
+  * Every event this machine writes is signed with its fleet key when it has one (fleet_sign.py).
+    Every event read from any shard is checked BEFORE it can enter state: a bad signature, or a
+    signature by a key other than the event's own `actor`, is quarantined always. Unsigned
+    events are trusted only while enforcement is off ("dark"); with `sig_enforce_after` set they
+    are quarantined too. "*" = strict (no grandfathering, recommended once every machine signs);
+    a timestamp grandfathers older events, but `ts` is self-reported, so a forged line can
+    backdate itself past it. `status` and `list` print the quarantine; nothing is dropped silently.
+  * A human approval is a signed ENVELOPE, not a free-text proof: human_principal, proposal_id,
+    action_digest (hash of the position on the table), expires_at, nonce, signature in the
+    "fleet-approval" namespace by a key in <bus>/_engine/signers/<principal>.pub, where the
+    principal is listed in `human_principals`. Expired, replayed (nonce), re-targeted (digest)
+    or unsigned approvals are refused; a COUNTER after the approval voids it.
+  Config keys (consensus.json): sig_enforce_after, human_principals. A synced config can be
+  edited by any machine that can write the bus, so the env overrides CONSENSUS_SIG_ENFORCE_AFTER
+  and CONSENSUS_HUMAN_PRINCIPALS (comma list) pin both locally; set them on machines you trust
+  more than the shared folder.
 """
-import os, sys, json, glob, uuid, datetime, shlex, subprocess, re
+import os, sys, json, glob, uuid, datetime, shlex, subprocess, re, hashlib
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -54,6 +76,9 @@ except Exception:
     pass
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, SCRIPTS)
+import fleet_sign as fs                       # noqa: E402  (sibling module, stdlib only)
+from protocol_guards import sig_enforced      # noqa: E402
 BUS = os.environ.get("MACHINE_BUS_DIR", os.path.join(os.path.expanduser("~"), "machine-bus"))
 ME  = os.environ.get("MACHINE_KEY", os.environ.get("COMPUTERNAME", os.environ.get("HOSTNAME", "unknown"))).strip()
 
@@ -156,14 +181,95 @@ def _parse_ts(s):
 
 
 def _append(ev):
-    """Append one event to MY shard only (single-writer)."""
+    """Append one event to MY shard only (single-writer), signed with this machine's key if it
+    has one. A signing failure writes the event unsigned and says so: in the dark phase that is a
+    counted rollout gap; under enforcement the event will be quarantined on read, loudly."""
+    try:
+        if fs.have_key():
+            ev["signer"] = ME
+            ev["sig"] = fs.sign_event(ev)
+    except Exception as e:
+        ev.pop("sig", None)
+        ev.pop("signer", None)
+        print("   ⚠️ signing failed, event written UNSIGNED: %s" % e)
     with open(_shard(), "a", encoding="utf-8") as fh:
         fh.write(json.dumps(ev, ensure_ascii=False) + "\n")
 
 
+QUARANTINE = []          # lines refused on the last read: {"file", "reason", "type", "actor", "id"}
+TRUST = {}               # counts from the last read: enforce, ok, unsigned, quarantined
+_VERDICTS = {}           # line hash -> verify result, this process
+_CACHE = {"loaded": False, "fp": None, "good": set()}
+
+
+def _enforce_after():
+    env = os.environ.get("CONSENSUS_SIG_ENFORCE_AFTER")
+    if env is not None:
+        return env.strip()
+    return str(_cfg().get("sig_enforce_after") or "").strip()
+
+
+def _cache_path():
+    return os.path.join(fs.KEYDIR, "verified-events.txt")
+
+
+def _cache_load():
+    """Good verdicts persist in a LOCAL (never synced) file, keyed by the registry fingerprint, so
+    a long ledger is not re-verified line by line on every CLI call. A changed registry (new key,
+    revocation) changes the fingerprint and silently retires every cached verdict."""
+    if _CACHE["loaded"]:
+        return
+    _CACHE["loaded"] = True
+    _CACHE["fp"] = fs.registry_fingerprint()
+    try:
+        for ln in open(_cache_path(), encoding="utf-8"):
+            fp, _, h = ln.strip().partition(" ")
+            if fp == _CACHE["fp"]:
+                _CACHE["good"].add(h)
+    except OSError:
+        pass
+
+
+def _cache_add(h):
+    _CACHE["good"].add(h)
+    try:
+        os.makedirs(fs.KEYDIR, exist_ok=True)
+        with open(_cache_path(), "a", encoding="utf-8") as fh:
+            fh.write("%s %s\n" % (_CACHE["fp"], h))
+    except OSError:
+        pass
+
+
+def _verify(ev, line):
+    """True = signed by its own actor and verified; False = forged; None = unsigned/unverifiable."""
+    if not ev.get("sig"):
+        return None
+    if (ev.get("signer") or ev.get("actor")) != ev.get("actor"):
+        return False             # a machine's key speaks for that machine only
+    h = hashlib.sha256(line.encode("utf-8")).hexdigest()
+    if h in _VERDICTS:
+        return _VERDICTS[h]
+    _cache_load()
+    if h in _CACHE["good"]:
+        v = True
+    else:
+        try:
+            v = fs.verify_event(ev)
+        except Exception:
+            v = None             # tooling missing here: unverifiable, never "good"
+        if v is True:
+            _cache_add(h)
+    _VERDICTS[h] = v
+    return v
+
+
 def _all_events():
-    """Read every shard, dedup by event_id (idempotent over redundant multi-rail delivery)."""
-    seen, out = set(), []
+    """Read every shard, verify each line, dedup by event_id (idempotent over redundant
+    multi-rail delivery). A line enters state only if its signature policy accepts it; the rest
+    goes to QUARANTINE with a reason, which `status` and `list` print."""
+    seen, out, quarantine = set(), [], []
+    enforce = _enforce_after()
+    ok = unsigned = 0
     for f in sorted(glob.glob(os.path.join(_dir(), "log-*.jsonl"))):
         # Parse PER LINE, not per file -- one corrupt line (partial write, sync-conflict junk)
         # used to silently drop EVERY event after it in that shard.
@@ -177,18 +283,38 @@ def _all_events():
                 continue
             try:
                 ev = json.loads(ln)
+                if not isinstance(ev, dict):
+                    raise ValueError("not an object")
             except Exception:
+                quarantine.append({"file": os.path.basename(f), "reason": "unparsable",
+                                   "type": None, "actor": None, "id": None})
                 continue
             if not _well_formed(ev):
+                quarantine.append({"file": os.path.basename(f), "reason": "malformed",
+                                   "type": ev.get("type"), "actor": ev.get("actor"),
+                                   "id": str(ev.get("proposal_id") or "?")[:8]})
                 continue
             # dedup per (actor, event_id): a duplicate delivery of MY event is a no-op, but
             # another machine reusing my event_id must not make my event disappear.
             key = (ev["actor"], ev["event_id"])
             if key in seen:
                 continue
+            v = _verify(ev, ln)
+            accepted, reason = sig_enforced(ev, enforce, v)
+            if not accepted:
+                quarantine.append({"file": os.path.basename(f), "reason": reason,
+                                   "type": ev.get("type"), "actor": ev.get("actor"),
+                                   "id": (ev.get("proposal_id") or "?")[:8]})
+                continue
+            ok += v is True
+            unsigned += v is None
             seen.add(key)
             out.append(ev)
     out.sort(key=_order_key)
+    QUARANTINE[:] = quarantine
+    TRUST.clear()
+    TRUST.update({"enforce": enforce or "DARK", "ok": ok, "unsigned": unsigned,
+                  "quarantined": len(quarantine)})
     return out
 
 
@@ -208,6 +334,21 @@ def _well_formed(ev):
     if ev.get("type") not in TYPES:
         return False
     return _seq(ev) is not None
+
+
+def _print_trust():
+    """One line on what the projection trusted, plus every refused line (capped)."""
+    if not (QUARANTINE or TRUST.get("unsigned") or TRUST.get("enforce") != "DARK"):
+        return
+    print("ledger trust: enforce=%s  signed-ok=%d  unsigned-trusted=%d  quarantined=%d%s" % (
+        TRUST.get("enforce"), TRUST.get("ok", 0), TRUST.get("unsigned", 0), len(QUARANTINE),
+        "  (DARK: unsigned lines are trusted; set sig_enforce_after)" if TRUST.get("enforce") == "DARK"
+        and TRUST.get("unsigned") else ""))
+    for q in QUARANTINE[:20]:
+        print("   QUARANTINE %-12s %-15s #%-8s actor=%s in %s" % (
+            q["reason"], q["type"] or "-", q["id"] or "-", q["actor"] or "-", q["file"]))
+    if len(QUARANTINE) > 20:
+        print("   ... and %d more" % (len(QUARANTINE) - 20))
 
 
 def _seq(ev):
@@ -457,28 +598,158 @@ def cmd_respond(idfrag, decision, text=None):
     return 0
 
 
+ENVELOPE_FIELDS = ("human_principal", "proposal_id", "action_digest", "expires_at", "nonce", "sig")
+
+
+def _human_principals():
+    raw = os.environ.get("CONSENSUS_HUMAN_PRINCIPALS")
+    if raw is not None:
+        return [x.strip() for x in raw.split(",") if x.strip()]
+    v = _cfg().get("human_principals") or []
+    return [str(x) for x in (v if isinstance(v, list) else [v])]
+
+
+def _action_digest(evs):
+    """What exactly the human is approving: the position currently on the table (the PROPOSE,
+    or the latest COUNTER). A counter after the approval changes the digest and voids it."""
+    evl = sorted(evs, key=_order_key)
+    pos = [e for e in evl if e.get("type") in ("PROPOSE", "COUNTER")]
+    prop = next((e for e in evl if e.get("type") == "PROPOSE"), evl[0])
+    cur = pos[-1] if pos else prop
+    body = {"proposal_id": prop.get("proposal_id"), "position_event_id": cur.get("event_id"),
+            "position_type": cur.get("type"), "subject": prop.get("subject", ""),
+            "details": prop.get("details"), "text": cur.get("text"),
+            "risk_tier": int(prop.get("risk_tier", 0) or 0)}
+    return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False,
+                                     separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _strict_ts(s):
+    try:
+        return datetime.datetime.strptime(s, "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+            tzinfo=datetime.timezone.utc)
+    except Exception:
+        return None
+
+
+def _check_envelope(env, pid, evs, check_expiry=True):
+    """(ok, reason). Every refusal names its reason; nothing here trusts a free-text claim."""
+    if not isinstance(env, dict):
+        return False, "envelope is not a JSON object"
+    missing = [k for k in ENVELOPE_FIELDS if not env.get(k)]
+    if missing:
+        return False, "envelope lacks %s" % ", ".join(missing)
+    principal = env["human_principal"]
+    if principal not in _human_principals():
+        return False, ("'%s' is not a configured human principal (human_principals / "
+                       "CONSENSUS_HUMAN_PRINCIPALS)" % principal)
+    if env["proposal_id"] != pid:
+        return False, "envelope is for proposal %s, not %s" % (str(env["proposal_id"])[:8], pid[:8])
+    if env["action_digest"] != _action_digest(evs):
+        return False, "action_digest does not match the position on the table (changed since the ask?)"
+    if check_expiry:
+        exp = _strict_ts(env["expires_at"])
+        if not exp:
+            return False, "expires_at is not a timestamp"
+        if _now() > exp:
+            return False, "approval expired at %s (re-ask, don't honour a stale OK)" % env["expires_at"]
+    try:
+        v = fs.verify_bytes(fs.canonical(env), env["sig"], principal, ns=fs.NS_APPROVAL)
+    except Exception as e:
+        v = None
+        print("   (signature check failed to run: %s)" % e)
+    if v is not True:
+        return False, ("BAD signature for %s" % principal if v is False else
+                       "cannot verify: no public key for '%s' in _engine/signers" % principal)
+    return True, "ok"
+
+
 def _human_approvals(evs):
-    return [e for e in evs if e.get("type") == "HUMAN_APPROVED"]
+    """Recorded approvals that still hold: a valid signed envelope for the CURRENT position.
+    A legacy free-text HUMAN_APPROVED (before v0.5.0) does not count; re-approve with a signed
+    envelope."""
+    out = []
+    for e in evs:
+        if e.get("type") == "HUMAN_APPROVED":
+            ok, _ = _check_envelope(e.get("approval"), e.get("proposal_id"), evs, check_expiry=False)
+            if ok:
+                out.append(e)
+    return out
 
 
-def cmd_approve(idfrag, proof):
-    """Closes a real gap: tier-2 escalates to the human, but the ledger had NO closure path --
-    cmd_commit hard-refused tier>=2, so human-approved proposals sat ESCALATED forever.
-    This verb RECORDS the human approval; `commit` then allows tier>=2 only WITH a recorded
-    approval. Auto-commit without approve stays banned. Proof string is REQUIRED and must say
-    who/where (e.g. 'owner approved, alerts-channel msg 1790183')."""
+def cmd_approval_request(idfrag, principal=None, ttl_min=15):
+    """Print the unsigned envelope for the human to sign (on their own device, with their key)."""
     pid, evs = _resolve(idfrag)
     if not pid:
         return 2
-    if not (proof or "").strip():
-        print("approve requires a proof string (who/where/msg-id of the human OK)"); return 2
+    s = _state(evs)
+    principals = _human_principals()
+    principal = principal or (principals[0] if principals else None)
+    if not principal:
+        print("no human principal configured: set human_principals in consensus.json "
+              "(or CONSENSUS_HUMAN_PRINCIPALS)"); return 2
+    env = {"v": 1, "proposal_id": pid, "subject": s["subject"], "risk_tier": s["tier"],
+           "action_digest": _action_digest(evs), "human_principal": principal,
+           "expires_at": _iso(_now() + datetime.timedelta(minutes=int(ttl_min))),
+           "nonce": uuid.uuid4().hex}
+    print(json.dumps(env, ensure_ascii=False, indent=2))
+    return 0
+
+
+def cmd_sign_approval(path, key, out=None):
+    """Run by the HUMAN, on a device that holds their key: sign an approval envelope."""
+    if not key:
+        print("sign-approval needs --key <private key file>"); return 2
+    env = json.load(open(path, encoding="utf-8"))
+    env.pop("sig", None)
+    env["sig"] = fs.sign_bytes(fs.canonical(env), key=key, ns=fs.NS_APPROVAL)
+    text = json.dumps(env, ensure_ascii=False, indent=2)
+    if out:
+        with open(out, "w", encoding="utf-8") as fh:
+            fh.write(text + "\n")
+        print("signed envelope -> %s" % os.path.basename(out))
+    else:
+        print(text)
+    return 0
+
+
+def cmd_approve(idfrag, envelope_src):
+    """Record a human approval; `commit` then allows tier>=2 only WITH a valid one.
+
+    History: tier-2 used to escalate with no closure path, so this verb was added and took a
+    free-text proof ("owner approved, msg 1790183"). Any process able to type that string could
+    unlock a Tier-2 commit (issue #9, row B). It now takes only a signed envelope (see the module
+    header); a proof string is refused, whoever claims to have sent it."""
+    pid, evs = _resolve(idfrag)
+    if not pid:
+        return 2
+    if not envelope_src:
+        print("REFUSED: approve needs a SIGNED approval envelope: `approve <id> --envelope <file|json>`.\n"
+              "   Make one with `approval-request <id>`, have the human sign it with "
+              "`sign-approval` on their own device. A free-text proof is not an approval."); return 2
+    try:
+        env = (json.load(open(envelope_src, encoding="utf-8")) if os.path.exists(envelope_src)
+               else json.loads(envelope_src))
+    except Exception as e:
+        print("REFUSED: envelope is not readable JSON (%s)" % e); return 2
     s = _state(evs)
     if _human_approvals(evs):
         print("already HUMAN-APPROVED #%s (idempotent skip)" % pid[:8]); return 0
-    ev = _mkevent("HUMAN_APPROVED", pid, subject=s["subject"], proof=proof, risk_tier=s["tier"])
+    nonce = env.get("nonce") if isinstance(env, dict) else None
+    used = [e for e in _all_events() if e.get("type") == "HUMAN_APPROVED"
+            and isinstance(e.get("approval"), dict) and e["approval"].get("nonce") == nonce]
+    if nonce and used:
+        print("REFUSED: nonce %s already used (replayed approval)" % str(nonce)[:12]); return 1
+    ok, why = _check_envelope(env, pid, evs)
+    if not ok:
+        print("REFUSED: %s" % why); return 1
+    ev = _mkevent("HUMAN_APPROVED", pid, subject=s["subject"], approval=env,
+                  proof="signed approval by %s, nonce %s" % (env["human_principal"], env["nonce"][:12]),
+                  risk_tier=s["tier"])
     _append(ev)
-    print("HUMAN-APPROVED #%s: %s" % (pid[:8], proof))
-    _emit(ev, extra="tier-%s approved by the human -> commit unlocked" % s["tier"])
+    print("HUMAN-APPROVED #%s by %s (signed, expires %s)" % (pid[:8], env["human_principal"],
+                                                           env["expires_at"]))
+    _emit(ev, extra="tier-%s approved by the human (signed) -> commit unlocked" % s["tier"])
     return 0
 
 
@@ -488,7 +759,8 @@ def cmd_commit(idfrag):
         return 2
     s = _state(evs)
     if s["tier"] >= 2 and not _human_approvals(evs):
-        print("REFUSED: Tier-2 needs a RECORDED human approval first -> `approve <id> \"<proof>\"`; auto-commit stays banned."); return 1
+        print("REFUSED: Tier-2 needs a valid SIGNED human approval first -> `approval-request` / "
+              "`approve <id> --envelope ...`; auto-commit stays banned."); return 1
     leader = ME == _cfg()["leader"]
     human_ok = s["tier"] >= 2 and bool(_human_approvals(evs))
     if s["status"] == "agreed" or (human_ok and leader):
@@ -579,6 +851,7 @@ def cmd_status(idfrag):
         return 2
     s = _state(evs)
     _print_state(s)
+    _print_trust()
     print("   timeline:")
     for e in s["events"]:
         print("     %s  %-9s %-16s %s" % (e.get("ts"), e.get("type"), e.get("actor"),
@@ -588,6 +861,7 @@ def cmd_status(idfrag):
 
 def cmd_list(which="open"):
     groups = _by_proposal()
+    _print_trust()
     if not groups:
         print("(no proposals yet)"); return 0
     rows = [_state(evs) for evs in groups.values()]
@@ -754,9 +1028,15 @@ def main():
         return cmd_tick()
     if cmd == "pending":
         return cmd_pending("--json" in a)
-    if cmd == "approve" and len(a) >= 3:
-        return cmd_approve(a[1], " ".join(a[2:]))
-    print("usage: consensus.py propose|respond|commit|verify|escalate|status|list|tick|pending|approve   (see header)")
+    if cmd == "approve" and len(a) >= 2:
+        return cmd_approve(a[1], _getopt(a, "--envelope"))
+    if cmd == "approval-request" and len(a) >= 2:
+        return cmd_approval_request(a[1], principal=_getopt(a, "--principal"),
+                                    ttl_min=_getopt(a, "--ttl-min", 15))
+    if cmd == "sign-approval" and len(a) >= 2:
+        return cmd_sign_approval(a[1], _getopt(a, "--key"), out=_getopt(a, "--out"))
+    print("usage: consensus.py propose|respond|commit|verify|escalate|status|list|tick|pending|"
+          "approval-request|sign-approval|approve   (see header)")
     return 2
 
 

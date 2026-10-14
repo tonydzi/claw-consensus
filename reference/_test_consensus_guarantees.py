@@ -19,7 +19,21 @@ import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE = os.environ.get("CONSENSUS_ENGINE") or os.path.join(HERE, "consensus.py")
+SIGNER = os.path.join(HERE, "fleet_sign.py")
 HUB, LAPTOP = "HUB-1", "LAPTOP-2"
+sys.path.insert(0, HERE)
+import fleet_sign  # noqa: E402  (to locate a working ssh-keygen; the engine under test is a CLI)
+
+
+def _have_ssh_keygen():
+    try:
+        subprocess.run([fleet_sign._ssh_keygen(), "-h"], capture_output=True, timeout=20)
+        return True
+    except Exception:
+        return False
+
+
+HAVE_SSH = _have_ssh_keygen()
 
 
 class Bus:
@@ -27,15 +41,65 @@ class Bus:
         self.root = tempfile.mkdtemp(prefix="consensus-test-")
         self.dd = os.path.join(self.root, "_decisions")
         os.makedirs(self.dd)
+        self.config()
+
+    def config(self, **extra):
+        cfg = {"leader": HUB, "round_cap": 3, "timeout_min": 30}
+        cfg.update(extra)
         with open(os.path.join(self.dd, "consensus.json"), "w", encoding="utf-8") as fh:
-            json.dump({"leader": HUB, "round_cap": 3, "timeout_min": 30}, fh)
+            json.dump(cfg, fh)
+
+    def env(self, machine):
+        # each simulated machine gets its own private key dir inside the temp bus
+        env = dict(os.environ, MACHINE_KEY=machine, MACHINE_BUS_DIR=self.root,
+                   CONSENSUS_NO_BUS="1", PYTHONIOENCODING="utf-8",
+                   LOCALAPPDATA=os.path.join(self.root, "_local", machine))
+        for k in ("CONSENSUS_DRY", "CONSENSUS_SIG_ENFORCE_AFTER", "CONSENSUS_HUMAN_PRINCIPALS",
+                  "FLEET_SIGN_DISABLE"):
+            env.pop(k, None)
+        return env
 
     def run(self, machine, *args):
-        env = dict(os.environ, MACHINE_KEY=machine, MACHINE_BUS_DIR=self.root,
-                   CONSENSUS_NO_BUS="1", PYTHONIOENCODING="utf-8")
-        env.pop("CONSENSUS_DRY", None)
-        return subprocess.run([sys.executable, ENGINE, *args], env=env, capture_output=True,
-                              text=True, encoding="utf-8", errors="replace")
+        return subprocess.run([sys.executable, ENGINE, *args], env=self.env(machine),
+                              capture_output=True, text=True, encoding="utf-8", errors="replace")
+
+    def init_key(self, machine):
+        """`fleet_sign.py init` as that machine: private key local, public key in the registry."""
+        subprocess.run([sys.executable, SIGNER, "init"], env=self.env(machine), check=True,
+                       capture_output=True, timeout=120)
+
+    def human_key(self, principal="OWNER"):
+        """A human's key on their own device; only the public half goes to the registry."""
+        d = os.path.join(self.root, "_device_%s" % principal)
+        os.makedirs(d, exist_ok=True)
+        key = os.path.join(d, "id_ed25519")
+        subprocess.run([fleet_sign._ssh_keygen(), "-q", "-t", "ed25519", "-N", "", "-f", key],
+                       check=True, capture_output=True, timeout=60)
+        signers = os.path.join(self.root, "_engine", "signers")
+        os.makedirs(signers, exist_ok=True)
+        shutil.copy(key + ".pub", os.path.join(signers, "%s.pub" % principal))
+        return key
+
+    def full_id(self, short):
+        return next(e["proposal_id"] for e in self.events() if e["proposal_id"].startswith(short))
+
+    def signed_envelope(self, pid, key, ttl="15", principal=None, patch=None):
+        """approval-request -> (optional edit) -> sign-approval with the human's key -> path."""
+        args = ["approval-request", pid, "--ttl-min", ttl]
+        if principal:
+            args += ["--principal", principal]
+        req = self.run(HUB, *args)
+        assert req.returncode == 0, req.stdout + req.stderr
+        env = json.loads(req.stdout)
+        if patch:
+            env.update(patch)
+        ask = os.path.join(self.root, "ask-%s.json" % env["nonce"][:8])
+        with open(ask, "w", encoding="utf-8") as fh:
+            json.dump(env, fh)
+        out = ask.replace("ask-", "signed-")
+        p = self.run("OWNER-DEVICE", "sign-approval", ask, "--key", key, "--out", out)
+        assert p.returncode == 0, p.stdout + p.stderr
+        return out
 
     def propose(self, machine, subject, tier="0"):
         p = self.run(machine, "propose", subject, "--tier", tier)
@@ -243,6 +307,160 @@ class Hostile_Lines(Base):
                             "type": "VERIFY", "actor": "AAA", "seq": 1,
                             "ts": "2026-07-11T00:00:00.000000Z", "proof": "unrelated"})
         self.assertIn("[REJECTED]", self.bus.status(HUB, pid))
+
+
+def _approve_free_text(bus, pid):
+    """The pre-v0.5.0 CLI shape: approve <id> "<proof>"."""
+    return bus.run(HUB, "approve", pid, "owner approved, alerts-channel msg 1790183")
+
+
+class B_SignedHumanApproval(Base):
+    """GOVERNANCE §2/§4: Tier-2 needs a HUMAN's approval; peer agreement does not substitute."""
+
+    def test_free_text_approval_is_refused(self):   # red on main
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        p = _approve_free_text(self.bus, pid)
+        self.assertNotEqual(p.returncode, 0, "a typed proof string unlocked the human gate")
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 1)
+        self.assertNotIn("HUMAN_APPROVED", [e["type"] for e in self.bus.events()])
+
+    @unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
+    def test_signed_envelope_unlocks_commit(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 1)
+        p = self.bus.run(HUB, "approve", pid, "--envelope", self.bus.signed_envelope(pid, key))
+        self.assertEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 0)
+        self.assertIn("COMMIT", [e["type"] for e in self.bus.events()])
+
+    @unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
+    def test_expired_envelope_is_refused(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        p = self.bus.run(HUB, "approve", pid, "--envelope",
+                         self.bus.signed_envelope(pid, key, ttl="-1"))
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("expired", p.stdout)
+
+    @unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
+    def test_replayed_nonce_is_refused(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        p1 = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        first = self.bus.signed_envelope(p1, key)
+        self.assertEqual(self.bus.run(HUB, "approve", p1, "--envelope", first).returncode, 0)
+        nonce = json.load(open(first, encoding="utf-8"))["nonce"]
+        p2 = self.bus.propose(HUB, "rotate the staging API token", tier="2")
+        again = self.bus.signed_envelope(p2, key, patch={"nonce": nonce})
+        p = self.bus.run(HUB, "approve", p2, "--envelope", again)
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("nonce", p.stdout)
+
+    @unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
+    def test_envelope_for_another_proposal_is_refused(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        p1 = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        p2 = self.bus.propose(HUB, "delete the production database", tier="2")
+        p = self.bus.run(HUB, "approve", p2, "--envelope", self.bus.signed_envelope(p1, key))
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertEqual(self.bus.run(HUB, "commit", p2).returncode, 1)
+
+    @unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
+    def test_counter_after_approval_voids_it(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        self.bus.run(HUB, "approve", pid, "--envelope", self.bus.signed_envelope(pid, key))
+        self.bus.run(LAPTOP, "respond", pid, "counter", "rotate ALL tokens instead")
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 1,
+                         "the human approved a different action than the one now on the table")
+
+    @unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
+    def test_a_machine_key_is_not_a_human(self):
+        self.bus.init_key(HUB)
+        hub_key = os.path.join(self.bus.root, "_local", HUB, "claude-fleet", "machine_ed25519")
+        self.bus.human_key()                                   # OWNER is registered ...
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        # ... but the hub signs as itself, then claims to be OWNER: both refused
+        as_itself = self.bus.signed_envelope(pid, hub_key, principal=HUB)
+        self.assertEqual(self.bus.run(HUB, "approve", pid, "--envelope", as_itself).returncode, 1)
+        as_owner = self.bus.signed_envelope(pid, hub_key, principal="OWNER")
+        p = self.bus.run(HUB, "approve", pid, "--envelope", as_owner)
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertIn("BAD signature", p.stdout)
+
+
+@unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
+class A_SignaturesOnLoad(Base):
+    """README/fleet_sign: events are signed per machine; a synced line is not state by itself."""
+
+    def keys(self):
+        self.bus.init_key(HUB)
+        self.bus.init_key(LAPTOP)
+
+    def forge(self, name, ev):
+        with open(os.path.join(self.bus.dd, "log-%s.jsonl" % name), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(ev) + "\n")
+
+    def test_hand_written_line_does_not_change_status(self):   # red on main
+        self.keys()
+        self.bus.config(sig_enforce_after="*")
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.forge("attacker", {"event_id": "forged-1", "proposal_id": self.bus.full_id(pid),
+                                "type": "ACCEPT", "actor": LAPTOP, "seq": 99,
+                                "ts": "2026-07-11T00:00:00.000000Z", "text": "ok"})
+        st = self.bus.status(HUB, pid)
+        self.assertIn("[PROPOSED]", st)
+        self.assertIn("QUARANTINE", st)
+        # and the real, signed accept still works
+        self.assertEqual(self.bus.run(LAPTOP, "respond", pid, "accept", "ok").returncode, 0)
+        self.assertIn("[AGREED]", self.bus.status(HUB, pid))
+
+    def test_tampered_signed_line_is_quarantined_even_in_dark_mode(self):   # red on main
+        self.keys()
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.bus.run(LAPTOP, "respond", pid, "reject", "no")
+        self.bus.rewrite(LAPTOP, lambda ev: dict(ev, type="ACCEPT", text="yes"))
+        st = self.bus.status(HUB, pid)
+        self.assertNotIn("[AGREED]", st, "an edited signed line was trusted")
+        self.assertIn("bad-signature", st)
+
+    def test_a_key_speaks_only_for_its_own_machine(self):
+        self.keys()
+        self.bus.init_key("ATTACKER")             # a registered machine, but not the laptop
+        self.bus.config(sig_enforce_after="*")
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        ev = {"event_id": "imp-1", "proposal_id": self.bus.full_id(pid), "type": "ACCEPT",
+              "actor": LAPTOP, "seq": 99, "ts": "2026-07-11T00:00:00.000000Z", "text": "ok"}
+        code = ("import sys,json; sys.path.insert(0,%r); import fleet_sign as f; "
+                "print(json.dumps(f.sign_event(json.loads(sys.argv[1]))))" % HERE)
+        sig = json.loads(subprocess.run([sys.executable, "-c", code, json.dumps(ev)],
+                                        env=self.bus.env("ATTACKER"), capture_output=True,
+                                        text=True, check=True).stdout)
+        self.forge("ATTACKER", dict(ev, sig=sig, signer="ATTACKER"))
+        st = self.bus.status(HUB, pid)
+        self.assertIn("[PROPOSED]", st)
+        self.assertIn("QUARANTINE", st)
+
+    def test_signed_fleet_runs_normally_under_strict_mode(self):
+        self.keys()
+        self.bus.config(sig_enforce_after="*")
+        pid = self.bus.propose(LAPTOP, "adopt nightly reindex at 04:00")
+        self.bus.run(HUB, "respond", pid, "accept", "ok")
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 0)
+        st = self.bus.status(HUB, pid)
+        self.assertIn("[COMMITTED]", st)
+        self.assertIn("quarantined=0", st)
+        self.assertTrue(all(e.get("sig") for e in self.bus.events()))
+
+    def test_dark_mode_says_it_is_dark(self):
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.assertIn("DARK", self.bus.status(HUB, pid))
 
 
 if __name__ == "__main__":

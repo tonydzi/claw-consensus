@@ -26,8 +26,13 @@ Event shape:
 ```json
 {"event_id": "1f0c...", "proposal_id": "9a2b...", "type": "PROPOSE",
  "actor": "HUB-1", "seq": 41, "ts": "2026-07-02T10:15:03.412000Z",
- "subject": "adopt nightly reindex at 03:30", "risk_tier": 0}
+ "subject": "adopt nightly reindex at 03:30", "risk_tier": 0,
+ "signer": "HUB-1", "sig": "-----BEGIN SSH SIGNATURE-----..."}
 ```
+
+`signer`/`sig` are present when the writing machine has a fleet key (`fleet_sign.py init`). The
+signature covers every other field (canonical JSON, sorted keys). A reader checks it **before** the
+event can enter state; see §6a, Guard 7.
 
 ## §3. Verbs and state machine
 
@@ -66,7 +71,27 @@ The proposer labels the tier, and that is the weakest link of the whole design: 
 
 Tripwire lesson: word-start matching, not plain substring. The term `send` used to fire on the identifier `bus_send.py`, spamming false Tier-2 escalations. Now word-terms match only at word starts (`send money` yes, `bus_send` no), while punctuation-led terms (`.env`, `rm -`) keep substring matching. The fix removes a false-positive class only; real hits still catch.
 
-**Tier-2 closure.** Escalation alone is not enough: our first version had cmd_commit hard-refuse tier>=2, so even human-approved proposals sat ESCALATED forever. The `approve <id> "<proof>"` verb records the human's OK (who/where/message-id, proof string required), and only then does `commit` unlock. Auto-commit without a recorded approval stays banned.
+**Tier-2 closure.** Escalation alone is not enough: our first version had cmd_commit hard-refuse tier>=2, so even human-approved proposals sat ESCALATED forever. The `approve` verb records the human's OK, and only then does `commit` unlock. Auto-commit without a recorded approval stays banned.
+
+**What counts as the human's OK (since v0.5.0).** Until v0.5.0 `approve <id> "<proof>"` took any non-empty string, so any process able to type "owner approved" could unlock a Tier-2 commit (issue #9, row B). Now it takes only a **signed approval envelope**:
+
+```json
+{"v": 1, "proposal_id": "9a2b...", "subject": "rotate the production API token", "risk_tier": 2,
+ "action_digest": "sha256 of the position on the table", "human_principal": "OWNER",
+ "expires_at": "2026-07-02T10:30:03.412000Z", "nonce": "c41e...", "sig": "-----BEGIN SSH SIGNATURE-----..."}
+```
+
+1. A machine runs `approval-request <id>` and sends the printed envelope to the human.
+2. The human signs it **on a device only they control**, with their own key:
+   `sign-approval ask.json --key <their private key> --out signed.json` (namespace `fleet-approval`).
+3. A machine records it: `approve <id> --envelope signed.json`.
+
+It is refused, with the reason printed, if: the principal is not in `human_principals`
+(config, or `CONSENSUS_HUMAN_PRINCIPALS` pinned locally) · the signature does not verify against
+`_engine/signers/<principal>.pub` · it names another proposal · `action_digest` no longer matches
+(a COUNTER after the approval voids it: the human approved a different action) · it expired · its
+nonce was already used. A machine's own key cannot pass: it is not a human principal, and the
+approval namespace differs from the event-signing one.
 
 ## §5. The deterministic driver: `tick`
 
@@ -160,6 +185,25 @@ Two distinctions carry the whole design:
 - **rollout order is not optional:** sign everything and verify nothing → a readable audit
   command → only then set an enforcement timestamp, forward in time. Flip straight to enforcement
   and you quarantine every machine without a key yet, which on day one is all of them.
+
+**Enforced in the engine since v0.5.0** (issue #9, row A; before that, nothing in `consensus.py`
+checked a signature and any line in any `log-*.jsonl` became state):
+
+- `consensus.py` signs every event it writes when the machine has a key, and checks every line it
+  reads **before** projection. Policy per line: bad signature → quarantine, always · signed by a
+  key other than the event's own `actor` → quarantine, always · unsigned → trusted only while
+  dark; quarantined once `sig_enforce_after` is set.
+- `sig_enforce_after = "*"` is strict: nothing is grandfathered. A timestamp grandfathers older
+  unsigned lines, but `ts` is written by whoever wrote the line, so a forged line can backdate
+  itself past the threshold; use a timestamp only during the rollout, then `"*"`.
+- `status` and `list` print `ledger trust: enforce=... signed-ok=N unsigned-trusted=M
+  quarantined=K` and one `QUARANTINE` row per refused line (unparsable lines included), so a
+  refusal is never silent. In dark mode the line says `DARK`.
+- Verified lines are cached locally (never synced) per registry fingerprint, so a long ledger is
+  not re-verified on every call; a new key or a revocation retires the cache.
+- The shared config is writable by any machine that can write the bus. Pin
+  `CONSENSUS_SIG_ENFORCE_AFTER` (and `CONSENSUS_HUMAN_PRINCIPALS`) in the environment of machines
+  you trust more than the shared folder.
 
 ## §7. Escalation channels: keep the alarm away from the noise
 

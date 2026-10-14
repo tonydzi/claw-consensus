@@ -53,7 +53,7 @@ Your own Claude Code will maintain this better than any human: point it at this 
 | `docs/GOVERNANCE.md` | Leader/follower canon, risk tiers, remote human approval, scoped authorization relay |
 | `docs/EVALS.md` | Reproduce our numbers: one-command demo, per-step latency, 0-token core, honest limits |
 | `docs/FAILURE-MODES.md` | Every known failure, its root cause, the guard, and a link to the exact code |
-| `demo/demo.py` | The one-command reproducible demo (5 scenarios, self-checking, offline) |
+| `demo/demo.py` | The one-command reproducible demo (6 scenarios, self-checking, offline) |
 | `reference/consensus.py` | The consensus engine (stdlib-only Python, append-only JSONL ledger) |
 | `reference/machine_bus.py` | The file-rail mailbox with capability addressing and auto-failover |
 | `reference/bus_send.py` | The dual-send gate: the ONE entry point for every machine-to-machine message |
@@ -76,11 +76,12 @@ python demo/demo.py
 ```
 
 No arguments, no network, no packages, no API key. It runs the published
-`reference/consensus.py`, simulates two machines on one host, and drives five
+`reference/consensus.py`, simulates two machines on one host, and drives six
 scenarios: the happy path (`propose -> counter -> accept -> commit -> verify x2`),
-the Tier-2 human gate refusing to auto-commit, the tripwire force-bumping a
-mislabelled dangerous action, split-brain caught on partition-heal, and a corrupt
-ledger line that does not eat the events after it. Exit code is `0` only if every
+the Tier-2 human gate refusing to auto-commit until a signed human approval, the
+tripwire force-bumping a mislabelled dangerous action, split-brain caught on
+partition-heal, a corrupt ledger line that does not eat the events after it, and a
+forged ledger line quarantined instead of becoming state. Exit code is `0` only if every
 end-state is correct, so the demo is also the integration test.
 
 The honest headline it prints: **the consensus engine makes 0 LLM calls and spends
