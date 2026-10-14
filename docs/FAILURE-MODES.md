@@ -33,7 +33,7 @@ never advanced the state, and the next tick did it again, forever.
 **Guard.** On a Tier-0 timeout of the leader's **own** proposal, the tie-break is
 now a direct decision of record (`LEADER_OVERRIDE` since v0.4.1), not a self-`ACCEPT`. A self-accept
 that cannot advance state is never re-cast.
-[`reference/consensus.py` cmd_tick, the `owner == ME` branch](../reference/consensus.py#L592-L602)
+[`reference/consensus.py` cmd_tick, the `owner == ME` branch](../reference/consensus.py#L657-L667)
 
 **Lesson.** A retry that re-issues an action which provably cannot change state is
 an infinite loop with extra steps. Make the terminal action terminal.
@@ -81,7 +81,7 @@ aborted the parse of the rest.
 
 **Guard.** The reader parses **per line, not per file**. A line that fails to parse
 is skipped; the events around it are still read.
-[`reference/consensus.py` _all_events](../reference/consensus.py#L164-L188)
+[`reference/consensus.py` _all_events](../reference/consensus.py#L164-L195)
 · demo scenario **E** injects `{"event_id": "partial-write-junk", "type": "COMM`
 into a shard and proves the `COMMIT` written after it is still read.
 
@@ -100,8 +100,8 @@ owned the apply, and committed. When the partition healed, two conflicting
 one proposal is detected on merge and marked `conflict` - never silently
 "committed". `tick` escalates it to the human for reconciliation; the leader's log
 is authoritative.
-[`_state` split-brain check](../reference/consensus.py#L251-L256)
-· [`cmd_tick` conflict escalation](../reference/consensus.py#L557-L564)
+[`_state` split-brain check](../reference/consensus.py#L281-L291)
+· [`cmd_tick` conflict escalation](../reference/consensus.py#L624-L629)
 · demo scenario **D** partitions the ledger, commits on both islands, heals, and
 shows `tick` catch it.
 
@@ -128,7 +128,7 @@ in a new costume.
 is not the committer.** The applier may self-verify, but an independent machine
 must re-check. A rubber-stamp guard also refuses (exit 1, nothing recorded) a proof that duplicates a prior
 verify verbatim (copy-paste is not a re-check).
-[`reference/consensus.py` cmd_verify](../reference/consensus.py#L450-L483)
+[`reference/consensus.py` cmd_verify](../reference/consensus.py#L513-L550)
 
 **Lesson.** Verification by the party that did the work is a status update, not a
 check. Independence is the whole value.
@@ -144,8 +144,8 @@ way into the ledger and the proposal sat `escalated` permanently.
 **Guard.** An `approve <id> "<proof>"` verb records the human OK as a first-class
 event (with a required who/where/msg-id proof string). `commit` then allows Tier-2
 **only** with a recorded approval; auto-commit without it stays banned.
-[`cmd_approve`](../reference/consensus.py#L401-L419)
-· [`cmd_commit` Tier-2 gate](../reference/consensus.py#L422-L447)
+[`cmd_approve`](../reference/consensus.py#L464-L482)
+· [`cmd_commit` Tier-2 gate](../reference/consensus.py#L485-L510)
 · demo scenario **B** shows the refusal, the approval, then the successful commit.
 
 **Lesson.** A human gate needs an *exit*, not just an entrance. A safety stop with
@@ -178,7 +178,7 @@ missed it.
 channel** (configured via `HUMAN_ALERT_CMD`), kept strictly for the two cases a
 human must answer: a Tier-2 action and a true deadlock. Routine traffic never
 touches it.
-[`reference/consensus.py` _human_alert](../reference/consensus.py#L295-L311)
+[`reference/consensus.py` _human_alert](../reference/consensus.py#L358-L374)
 
 **Lesson.** An alert channel that also carries noise is not an alert channel.
 

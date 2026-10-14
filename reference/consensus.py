@@ -179,20 +179,46 @@ def _all_events():
                 ev = json.loads(ln)
             except Exception:
                 continue
-            eid = ev.get("event_id")
-            if eid in seen:
+            if not _well_formed(ev):
                 continue
-            seen.add(eid)
+            # dedup per (actor, event_id): a duplicate delivery of MY event is a no-op, but
+            # another machine reusing my event_id must not make my event disappear.
+            key = (ev["actor"], ev["event_id"])
+            if key in seen:
+                continue
+            seen.add(key)
             out.append(ev)
     out.sort(key=_order_key)
     return out
 
 
+SEQ_MAX = 2 ** 53        # beyond this a JSON number stops being an exact integer everywhere
+
+
+def _well_formed(ev):
+    """The minimum shape an event needs before it may influence state. A line that fails this
+    is refused, never repaired: a negative or non-integer seq would reorder history (a forged
+    PROPOSE with seq -1 used to sort first and take the proposal over), Infinity crashed every
+    reader, and a non-string ts broke the sort for everyone."""
+    if not isinstance(ev, dict):
+        return False
+    for k in ("event_id", "proposal_id", "actor", "ts"):
+        if not isinstance(ev.get(k), str) or not ev.get(k):
+            return False
+    if ev.get("type") not in TYPES:
+        return False
+    return _seq(ev) is not None
+
+
 def _seq(ev):
-    try:
-        return int(ev.get("seq") or 0)
-    except (TypeError, ValueError):
+    """The event's logical clock: 0 when absent (written before seq existed), None when present
+    but not a plain integer in [0, 2**53) -- such an event is malformed (see _well_formed)."""
+    v = ev.get("seq", 0)
+    if v is None:
         return 0
+    if isinstance(v, bool) or not isinstance(v, int) or not 0 <= v < SEQ_MAX:
+        return None
+    return v
 
 
 def _order_key(ev):
@@ -205,7 +231,7 @@ def _order_key(ev):
     accepted. `ts` now only breaks ties between concurrent events (same seq, neither saw the
     other), then actor and event_id make the order total and identical on every machine.
     Events written before seq existed carry seq 0 and keep their old ts order."""
-    return (_seq(ev), ev.get("ts", ""), ev.get("actor", ""), ev.get("event_id", ""))
+    return (_seq(ev) or 0, ev.get("ts", ""), ev.get("actor", ""), ev.get("event_id", ""))
 
 
 def _by_proposal():
@@ -218,16 +244,19 @@ def _by_proposal():
 def _state(evs):
     """Derive the current state of one proposal from its merged events, in projection order."""
     evs = sorted(evs, key=_order_key)
-    prop = next((e for e in evs if e.get("type") == "PROPOSE"), evs[0])
+    proposes = [e for e in evs if e.get("type") == "PROPOSE"]
+    prop = proposes[0] if proposes else evs[0]
     s = {
         "proposal_id": prop.get("proposal_id"),
         "subject": prop.get("subject", ""),
         "proposer": prop.get("actor", "?"),
-        "tier": int(prop.get("risk_tier", 0) or 0),
+        # fail-safe: if a proposal_id ever carries more than one PROPOSE, the HIGHEST tier wins,
+        # so a second PROPOSE can never talk a Tier-2 action down to Tier-0
+        "tier": max([_tier(e) for e in proposes] or [_tier(prop)]),
         "created": prop.get("ts"),
         "rounds": sum(1 for e in evs if e.get("type") in ("PROPOSE", "COUNTER")),
         "accepts": sorted({e["actor"] for e in evs if e.get("type") == "ACCEPT"}),
-        "verifies": sorted({e["actor"] for e in evs if e.get("type") == "VERIFY"}),
+        "verifies": _counted_verifiers(evs),
         "committers": sorted({e["actor"] for e in evs if e.get("type") in DECISION_TYPES}),
         "overrides": sorted({e["actor"] for e in evs if e.get("type") == "LEADER_OVERRIDE"}),
         "events": evs,
@@ -248,7 +277,13 @@ def _state(evs):
     # Guard #3 (anti split-brain): only ONE machine should ever apply+COMMIT a given proposal.
     # COMMITs from >1 distinct actor = the partition healed and two sides diverged -> conflict,
     # never silently "committed". Detected on merge; must escalate to the human for reconciliation.
+    s["conflict"] = None
     if len(s["committers"]) > 1:
+        s["conflict"] = "conflicting decisions by %s" % ", ".join(s["committers"])
+    elif len(proposes) > 1:
+        s["conflict"] = "%d PROPOSE events for one proposal_id (by %s)" % (
+            len(proposes), ", ".join(sorted({e.get("actor", "?") for e in proposes})))
+    if s["conflict"]:
         s["status"] = "conflict"
     elif "COMMIT" in types:
         s["status"] = "committed"
@@ -265,6 +300,34 @@ def _state(evs):
     else:
         s["status"] = "proposed"
     return s
+
+
+def _tier(ev):
+    try:
+        return int(ev.get("risk_tier", 0) or 0)
+    except (TypeError, ValueError):
+        return 2             # an unreadable tier is treated as the dangerous one
+
+
+def _norm_proof(p):
+    """A proof reduced to its words: case, punctuation and spacing do not make a copy new."""
+    return " ".join(re.findall(r"[0-9a-z]+", (p or "").lower()))
+
+
+def _counted_verifiers(evs):
+    """Machines whose VERIFY counts: only the FIRST VERIFY carrying a given proof counts, so a
+    copied proof (recorded with --advisory, or appended to a shard by hand) never adds a
+    verifier. evs must be in projection order."""
+    seen, out = set(), set()
+    for e in evs:
+        if e.get("type") != "VERIFY":
+            continue
+        n = _norm_proof(e.get("proof"))
+        if not n or n in seen:
+            continue
+        seen.add(n)
+        out.add(e["actor"])
+    return sorted(out)
 
 
 def _deadline(s, cfg):
@@ -328,7 +391,7 @@ def _next_seq():
     """Lamport clock: 1 + the highest seq in any shard I can read. Monotonic per machine (my own
     shard is part of what I read) and causal across machines (an answer always outranks the
     position it answers)."""
-    return 1 + max([_seq(e) for e in _all_events()] or [0])
+    return 1 + max([_seq(e) or 0 for e in _all_events()] or [0])
 
 
 def _mkevent(etype, proposal_id, **kw):
@@ -456,18 +519,22 @@ def cmd_verify(idfrag, proof, advisory=False):
     # self-verify, but "globally done" needs at least one INDEPENDENT verify from a machine that
     # did NOT apply it -- a second machine re-checking, not the applier vouching for itself.
     committer = s["committers"][0] if s["committers"] else None
-    prior_proofs = [e.get("proof", "").strip() for e in evs if e.get("type") == "VERIFY"]
+    prior_proofs = {_norm_proof(e.get("proof")) for e in evs if e.get("type") == "VERIFY"}
+    if not _norm_proof(proof):
+        print("REFUSED: a proof needs words or numbers, not just punctuation."); return 2
+    duplicate = _norm_proof(proof) in prior_proofs
     if committer and ME == committer:
         print("   note: you COMMITTED #%s -> this is a SELF-verify; still needs an INDEPENDENT machine's verify." % pid[:8])
-    if proof.strip() and proof.strip() in prior_proofs:
+    if duplicate:
         if not advisory:
             print("REFUSED (rubber-stamp guard): your proof duplicates a prior VERIFY verbatim -> "
                   "re-check INDEPENDENTLY (re-run / re-read) and write what YOU saw. Nothing recorded.")
             return 1
-        print("   ⚠️ RUBBER-STAMP GUARD (advisory): your proof duplicates a prior VERIFY verbatim -> recorded anyway.")
+        print("   ⚠️ RUBBER-STAMP GUARD (advisory): your proof duplicates a prior VERIFY -> recorded, "
+              "but it does NOT count toward done.")
     ev = _mkevent("VERIFY", pid, subject=s["subject"], proof=proof)
     _append(ev)
-    after = sorted(set(s["verifies"]) | {ME})
+    after = sorted(set(s["verifies"]) | (set() if duplicate else {ME}))
     independent = [a for a in after if a != committer]
     print("VERIFY #%s by %s: %s" % (pid[:8], ME, proof))
     done = len(after) >= 2 and len(independent) >= 1
@@ -555,12 +622,10 @@ def cmd_tick():
         # 0) Guard #3: split-brain detected (>1 machine committed the same proposal) -> never
         #    auto-resolve; hand to the human for reconciliation (the leader's log is authoritative).
         if s["status"] == "conflict":
-            print("#%s SPLIT-BRAIN: committed by %s -> escalate for reconciliation" % (
-                pid[:8], ", ".join(s["committers"])))
+            print("#%s CONFLICT: %s -> escalate for reconciliation" % (pid[:8], s["conflict"]))
             if not os.environ.get("CONSENSUS_DRY"):
-                ev = _mkevent("ESCALATE", pid, subject=s["subject"],
-                              text="split-brain: conflicting commits by %s" % ", ".join(s["committers"]))
-                _append(ev); _emit(ev, extra="❓ two commits diverged -- the human must reconcile")
+                ev = _mkevent("ESCALATE", pid, subject=s["subject"], text="conflict: %s" % s["conflict"])
+                _append(ev); _emit(ev, extra="❓ the ledger diverged -- the human must reconcile")
             acted += 1; continue
         # 1) Tier-2 already proposed but somehow open -> ensure escalated (belt & suspenders)
         if s["tier"] >= 2:

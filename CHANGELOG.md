@@ -21,8 +21,14 @@ rows D, C and E; found by an outside audit, re-checked by hand against `main`):
   projection sorts by `(seq, ts, actor, event_id)`. A machine whose clock runs behind can no
   longer write an ACCEPT that sorts before the proposal it accepts. Old events without `seq`
   keep their `ts` order.
-- New `reference/_test_consensus_guarantees.py`: 10 tests, 6 of them shown red against the
-  pre-fix engine (`CONSENSUS_ENGINE=<old consensus.py>`), all green now. `demo/demo.py` is
+- **Hostile lines** (found by an adversarial review of the fix above, each reproduced first):
+  a copied proof with a trailing "." passed the guard; a hand-appended duplicate VERIFY counted
+  toward done; a second PROPOSE with `seq: -1` took a Tier-2 proposal over as Tier-0; `seq:
+  Infinity` crashed every reader; another machine reusing my `event_id` erased my vote. Now:
+  proofs compared on their words and counted once in the projection; malformed lines refused;
+  dedup per `(actor, event_id)`; more than one PROPOSE = `conflict`, highest tier wins.
+- New `reference/_test_consensus_guarantees.py`: 16 tests. Against v0.4.0 11 fail, against the
+  first cut of this fix the 6 hostile-line tests fail; all 16 pass now. `demo/demo.py` is
   unchanged and still passes all five scenarios.
 
 Not in this release: rows A (signature check on load) and B (signed human approval); they change

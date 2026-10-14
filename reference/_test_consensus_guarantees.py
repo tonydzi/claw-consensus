@@ -181,6 +181,70 @@ class E_LogicalOrder(Base):
         self.assertIn("[AGREED]", self.bus.status(HUB, pid))
 
 
+class Hostile_Lines(Base):
+    """Lines a misbehaving machine can append to its own shard (found by adversarial review of
+    the first fix). In dark mode they are unsigned and trusted, so the projection itself has to
+    survive them; signatures (row A) then decide WHO may write them at all."""
+
+    def append(self, name, ev):
+        with open(os.path.join(self.bus.dd, "log-%s.jsonl" % name), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(ev) + "\n")
+
+    def full_id(self, short):
+        return next(e["proposal_id"] for e in self.bus.events() if e["proposal_id"].startswith(short))
+
+    def test_cosmetic_change_to_a_copied_proof_is_still_a_copy(self):   # red on main
+        pid = self.committed()
+        self.bus.run(HUB, "verify", pid, "cron present, exit 0")
+        p = self.bus.run(LAPTOP, "verify", pid, "Cron present -- exit 0.")
+        self.assertEqual(p.returncode, 1, p.stdout)
+
+    def test_hand_appended_duplicate_verify_does_not_count(self):   # red on main
+        pid = self.committed()
+        self.bus.run(HUB, "verify", pid, "cron present, exit 0")
+        self.append(LAPTOP, {"event_id": "dup-1", "proposal_id": self.full_id(pid), "type": "VERIFY",
+                             "actor": LAPTOP, "seq": 50, "ts": "2026-07-11T00:00:00.000000Z",
+                             "proof": "cron present, exit 0"})
+        self.assertNotIn("DONE", self.bus.status(HUB, pid))
+
+    def test_second_propose_cannot_lower_the_tier(self):   # red on main
+        pid = self.bus.propose(HUB, "wire the quarterly payment", tier="2")
+        self.append("EVIL", {"event_id": "takeover", "proposal_id": self.full_id(pid),
+                             "type": "PROPOSE", "actor": "EVIL", "seq": 0, "risk_tier": 0,
+                             "ts": "2000-01-01T00:00:00.000000Z", "subject": "harmless"})
+        st = self.bus.status(HUB, pid)
+        self.assertIn("tier=2", st)
+        self.assertIn("[CONFLICT]", st)
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 1)
+
+    def test_negative_seq_is_refused(self):
+        pid = self.bus.propose(HUB, "wire the quarterly payment", tier="2")
+        self.append("EVIL", {"event_id": "neg", "proposal_id": self.full_id(pid), "type": "PROPOSE",
+                             "actor": "EVIL", "seq": -1, "risk_tier": 0,
+                             "ts": "2026-07-11T00:00:00.000000Z", "subject": "harmless"})
+        st = self.bus.status(HUB, pid)
+        self.assertIn("tier=2", st)
+        self.assertIn("by HUB-1", st)
+
+    def test_non_finite_seq_does_not_crash_readers(self):
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        with open(os.path.join(self.bus.dd, "log-EVIL.jsonl"), "w", encoding="utf-8") as fh:
+            fh.write('{"event_id": "inf", "proposal_id": "%s", "type": "ACCEPT", "actor": "EVIL", '
+                     '"seq": Infinity, "ts": "2026-07-11T00:00:00.000000Z"}\n' % self.full_id(pid))
+        self.assertEqual(self.bus.run(HUB, "list").returncode, 0)
+        self.assertEqual(self.bus.run(LAPTOP, "respond", pid, "accept", "ok").returncode, 0)
+
+    def test_reused_event_id_cannot_erase_another_machines_vote(self):   # red on main
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.bus.run(LAPTOP, "respond", pid, "reject", "no")
+        reject = next(e for e in self.bus.events(LAPTOP) if e["type"] == "REJECT")
+        # "log-AAA" sorts before "log-LAPTOP-2", so its line is read first
+        self.append("AAA", {"event_id": reject["event_id"], "proposal_id": self.full_id(pid),
+                            "type": "VERIFY", "actor": "AAA", "seq": 1,
+                            "ts": "2026-07-11T00:00:00.000000Z", "proof": "unrelated"})
+        self.assertIn("[REJECTED]", self.bus.status(HUB, pid))
+
+
 if __name__ == "__main__":
     print("engine under test: %s" % ENGINE)
     unittest.main(verbosity=2)
