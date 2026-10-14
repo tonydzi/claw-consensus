@@ -93,6 +93,16 @@ It is refused, with the reason printed, if: the principal is not in `human_princ
 nonce was already used. A machine's own key cannot pass: it is not a human principal, and the
 approval namespace differs from the event-signing one.
 
+These checks run **on the ledger, at commit time**, not only inside `approve`: a machine can
+append a `HUMAN_APPROVED` line without calling `approve` at all. So an approval must be **used
+before it expires** (commit within the window, default 15 min); after that, re-ask.
+
+**Pin the human's key.** By default the public key is read from `_engine/signers/`, a shared
+folder: any machine that can write the bus can replace `OWNER.pub` with its own key and sign "as
+the owner". Set `CONSENSUS_HUMAN_SIGNERS_DIR` to a local folder holding the human keys on every
+machine that records approvals or commits Tier-2; `approve` prints a note while the key still
+comes from the shared registry.
+
 ## §5. The deterministic driver: `tick`
 
 `tick` runs on a schedule (we use ~20 min on the always-on hub) and applies policy with zero LLM tokens:
@@ -203,7 +213,14 @@ checked a signature and any line in any `log-*.jsonl` became state):
   not re-verified on every call; a new key or a revocation retires the cache.
 - The shared config is writable by any machine that can write the bus. Pin
   `CONSENSUS_SIG_ENFORCE_AFTER` (and `CONSENSUS_HUMAN_PRINCIPALS`) in the environment of machines
-  you trust more than the shared folder.
+  you trust more than the shared folder. The same holds for the key registry itself:
+  `FLEET_SIGNERS_DIR` points `fleet_sign` at a local copy of the machine keys.
+- An enforcement value that is neither `"*"` nor a timestamp (say `true`) fails **closed**, as
+  strict. It used to become the string `"True"`, which grandfathered every event.
+- Dedup is per `(actor, event_id)`, and malformed lines are quarantined with reason `malformed`
+  (see §2), so a signed but hostile machine cannot erase another machine's event or crash the
+  readers; what it can still do is write events under its own name, which is what signatures are
+  for.
 
 ## §7. Escalation channels: keep the alarm away from the noise
 

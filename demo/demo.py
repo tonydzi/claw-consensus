@@ -63,7 +63,8 @@ def machine_env(machine, bus):
     env["MACHINE_KEY"] = machine
     env["MACHINE_BUS_DIR"] = bus
     env["LOCALAPPDATA"] = os.path.join(bus, "_local", machine)
-    for k in ("CONSENSUS_SIG_ENFORCE_AFTER", "CONSENSUS_HUMAN_PRINCIPALS", "FLEET_SIGN_DISABLE"):
+    for k in ("CONSENSUS_SIG_ENFORCE_AFTER", "CONSENSUS_HUMAN_PRINCIPALS", "FLEET_SIGN_DISABLE",
+              "FLEET_SIGNERS_DIR", "CONSENSUS_HUMAN_SIGNERS_DIR"):
         env.pop(k, None)
     return env
 

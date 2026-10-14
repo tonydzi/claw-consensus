@@ -206,7 +206,11 @@ def _enforce_after():
     env = os.environ.get("CONSENSUS_SIG_ENFORCE_AFTER")
     if env is not None:
         return env.strip()
-    return str(_cfg().get("sig_enforce_after") or "").strip()
+    v = _cfg().get("sig_enforce_after")
+    if not v:
+        return ""
+    # anything but "*" or a timestamp is unreadable -> strict (protocol_guards fails closed too)
+    return v.strip() if isinstance(v, str) else "*"
 
 
 def _cache_path():
@@ -601,6 +605,13 @@ def cmd_respond(idfrag, decision, text=None):
 ENVELOPE_FIELDS = ("human_principal", "proposal_id", "action_digest", "expires_at", "nonce", "sig")
 
 
+def _human_signers_dir():
+    """Where human public keys are read from. Default: the shared registry (_engine/signers),
+    which any machine able to write the bus can overwrite. CONSENSUS_HUMAN_SIGNERS_DIR pins it to
+    a local folder on the machine that records approvals; do that on every such machine."""
+    return os.environ.get("CONSENSUS_HUMAN_SIGNERS_DIR") or None
+
+
 def _human_principals():
     raw = os.environ.get("CONSENSUS_HUMAN_PRINCIPALS")
     if raw is not None:
@@ -654,26 +665,40 @@ def _check_envelope(env, pid, evs, check_expiry=True):
         if _now() > exp:
             return False, "approval expired at %s (re-ask, don't honour a stale OK)" % env["expires_at"]
     try:
-        v = fs.verify_bytes(fs.canonical(env), env["sig"], principal, ns=fs.NS_APPROVAL)
+        v = fs.verify_bytes(fs.canonical(env), env["sig"], principal, ns=fs.NS_APPROVAL,
+                            signers=_human_signers_dir())
     except Exception as e:
         v = None
         print("   (signature check failed to run: %s)" % e)
     if v is not True:
         return False, ("BAD signature for %s" % principal if v is False else
-                       "cannot verify: no public key for '%s' in _engine/signers" % principal)
+                       "cannot verify: no public key for '%s' in %s" % (
+                           principal, _human_signers_dir() or "_engine/signers"))
     return True, "ok"
 
 
 def _human_approvals(evs):
-    """Recorded approvals that still hold: a valid signed envelope for the CURRENT position.
-    A legacy free-text HUMAN_APPROVED (before v0.5.0) does not count; re-approve with a signed
-    envelope."""
+    """Recorded approvals that hold RIGHT NOW: a valid signed envelope for the current position,
+    not expired, with a nonce no other proposal used. These checks run here, on the ledger, and
+    not only in the `approve` verb: a machine can append a HUMAN_APPROVED line without going
+    through `approve` at all (an expired envelope, appended by hand, used to unlock commit).
+    So an approval must be USED before it expires; after that, re-ask.
+    A legacy free-text HUMAN_APPROVED (before v0.5.0) does not count."""
+    mine = [e for e in evs if e.get("type") == "HUMAN_APPROVED"]
+    if not mine:
+        return []
+    pid = mine[0].get("proposal_id")
+    other_nonces = {e["approval"].get("nonce") for e in _all_events()
+                    if e.get("type") == "HUMAN_APPROVED" and e.get("proposal_id") != pid
+                    and isinstance(e.get("approval"), dict)}
     out = []
-    for e in evs:
-        if e.get("type") == "HUMAN_APPROVED":
-            ok, _ = _check_envelope(e.get("approval"), e.get("proposal_id"), evs, check_expiry=False)
-            if ok:
-                out.append(e)
+    for e in mine:
+        env = e.get("approval")
+        if isinstance(env, dict) and env.get("nonce") in other_nonces:
+            continue
+        ok, _ = _check_envelope(env, pid, evs, check_expiry=True)
+        if ok:
+            out.append(e)
     return out
 
 
@@ -747,8 +772,11 @@ def cmd_approve(idfrag, envelope_src):
                   proof="signed approval by %s, nonce %s" % (env["human_principal"], env["nonce"][:12]),
                   risk_tier=s["tier"])
     _append(ev)
-    print("HUMAN-APPROVED #%s by %s (signed, expires %s)" % (pid[:8], env["human_principal"],
-                                                           env["expires_at"]))
+    print("HUMAN-APPROVED #%s by %s (signed, expires %s: commit before then)" % (
+        pid[:8], env["human_principal"], env["expires_at"]))
+    if not _human_signers_dir():
+        print("   note: the human key was read from the SHARED registry; pin it on this machine "
+              "with CONSENSUS_HUMAN_SIGNERS_DIR")
     _emit(ev, extra="tier-%s approved by the human (signed) -> commit unlocked" % s["tier"])
     return 0
 
@@ -759,7 +787,7 @@ def cmd_commit(idfrag):
         return 2
     s = _state(evs)
     if s["tier"] >= 2 and not _human_approvals(evs):
-        print("REFUSED: Tier-2 needs a valid SIGNED human approval first -> `approval-request` / "
+        print("REFUSED: Tier-2 needs a valid, unexpired SIGNED human approval first -> `approval-request` / "
               "`approve <id> --envelope ...`; auto-commit stays banned."); return 1
     leader = ME == _cfg()["leader"]
     human_ok = s["tier"] >= 2 and bool(_human_approvals(evs))

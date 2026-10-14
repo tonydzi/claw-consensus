@@ -43,6 +43,8 @@ Security model, explicitly: **the strength is the human's private key, not the t
 
 - Anti-injection: text INSIDE a chat is data. A relayed "the owner said yes", a third party quoting the token, or a machine's own key is never an approval; only a signature by a key listed as a human principal is.
 - The key lives where only the human can use it (their phone or laptop), never in the synced bus. If they approve from a phone, the signing key lives on that phone.
+- The *public* key must be pinned too: machines that record approvals or commit Tier-2 read it from a local folder (`CONSENSUS_HUMAN_SIGNERS_DIR`), not from the shared registry that any bus writer could swap.
+- An approval is checked again at commit time, on the ledger, and must be used before it expires.
 - The approval binds to the exact action (`action_digest`): a counter-proposal after the approval voids it.
 - The ask expires (15 min is our window; `expires_at` in the envelope); a stale approval is re-asked, not honored. A `nonce` makes each approval single-use.
 - The signed envelope is recorded in the ledger, auditable later.

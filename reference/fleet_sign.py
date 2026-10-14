@@ -52,7 +52,9 @@ ME = os.environ.get("MACHINE_KEY", os.environ.get("COMPUTERNAME",
                     os.environ.get("HOSTNAME", "unknown"))).strip()
 KEYDIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "claude-fleet")
 KEY = os.path.join(KEYDIR, "machine_ed25519")
-SIGNERS = os.path.join(BUS, "_engine", "signers")
+# FLEET_SIGNERS_DIR pins the trust set to a LOCAL folder. The default lives in the shared bus,
+# and anything that can write the bus can also replace a .pub file there.
+SIGNERS = os.environ.get("FLEET_SIGNERS_DIR") or os.path.join(BUS, "_engine", "signers")
 REVOKED = os.path.join(SIGNERS, "REVOKED.txt")
 NS = "fleet"
 # Human approvals are signed in their own namespace, so a machine's event signature can never be
@@ -134,21 +136,23 @@ def sign_bytes(data, key=None, ns=NS):
     return r.stdout.decode("ascii")
 
 
-def _revoked():
+def _revoked(signers=None):
+    path = os.path.join(signers, "REVOKED.txt") if signers else REVOKED
     try:
-        return {ln.strip() for ln in open(REVOKED, encoding="utf-8")
+        return {ln.strip() for ln in open(path, encoding="utf-8")
                 if ln.strip() and not ln.startswith("#")}
     except OSError:
         return set()
 
 
-def _assemble_allowed(ns=NS):
+def _assemble_allowed(ns=NS, signers=None):
     """allowed_signers content built from signers/*.pub minus REVOKED. None = no registry yet."""
-    if not os.path.isdir(SIGNERS):
+    signers = signers or SIGNERS
+    if not os.path.isdir(signers):
         return None
-    dead = _revoked()
+    dead = _revoked(signers)
     lines = []
-    for f in sorted(glob.glob(os.path.join(SIGNERS, "*.pub"))):
+    for f in sorted(glob.glob(os.path.join(signers, "*.pub"))):
         principal = os.path.splitext(os.path.basename(f))[0]
         if principal in dead:
             continue
@@ -168,11 +172,11 @@ def registry_fingerprint():
     return hashlib.sha256((_assemble_allowed() or "").encode("utf-8")).hexdigest()[:16]
 
 
-def verify_bytes(data, sig_text, signer, ns=NS):
+def verify_bytes(data, sig_text, signer, ns=NS, signers=None):
     """True / False, or None when there is no registry to verify against."""
     if _disabled():
         return None
-    allowed = _assemble_allowed(ns)
+    allowed = _assemble_allowed(ns, signers)
     if not allowed:
         return None
     af = sf = None

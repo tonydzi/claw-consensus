@@ -16,7 +16,7 @@ tied to the work.) Format: what shipped, in plain words.
   on their own device with `sign-approval ... --key`, and `approve <id> --envelope` records it.
   Refused, with the reason printed: unknown principal, bad or missing signature, another
   proposal, changed action (a COUNTER after the approval voids it), expired, replayed nonce.
-  New config `human_principals`. **Migration:** a legacy free-text `HUMAN_APPROVED` no longer
+  New config `human_principals`; human keys pinned with `CONSENSUS_HUMAN_SIGNERS_DIR`. **Migration:** a legacy free-text `HUMAN_APPROVED` no longer
   unlocks `commit`; re-approve open Tier-2 proposals with a signed envelope.
 - **A. Signatures are checked on load.** `consensus.py` signs every event it writes when the
   machine has a fleet key (`fleet_sign.py init`) and checks every line before projection: bad
@@ -35,8 +35,16 @@ tied to the work.) Format: what shipped, in plain words.
 - `demo/demo.py`: scenario B now goes through the signed envelope and shows the free-text
   approve refused; new scenario F forges a line under strict mode and shows it quarantined. Each
   simulated machine gets its own key dir inside the temp bus.
-- `reference/_test_consensus_guarantees.py`: 22 tests. Against v0.4.1 (`CONSENSUS_ENGINE=...`)
-  the 12 new ones fail; against v0.4.0 18 fail; all 22 pass now. New failure mode **N**.
+- **Hardened after an adversarial review of the first cut** (each attack reproduced first, each
+  now a test that was red on that cut): a bus writer could swap `signers/OWNER.pub` and sign as
+  the owner → `CONSENSUS_HUMAN_SIGNERS_DIR` pins human keys locally (`FLEET_SIGNERS_DIR` does the
+  same for machine keys), and `approve` says when the key is unpinned; an expired envelope
+  appended by hand as `HUMAN_APPROVED` unlocked commit → expiry and nonce are re-checked on the
+  ledger at commit time, so an approval must be used before it expires; `sig_enforce_after:
+  true` disabled enforcement → unreadable values fail closed as strict. Malformed lines now go
+  to the quarantine (`malformed`) instead of being skipped.
+- `reference/_test_consensus_guarantees.py`: 31 tests. Against v0.4.1 the 15 new ones fail;
+  all 31 pass now. New failure mode **N**.
 
 ## v0.4.1 - 2026-10-14
 

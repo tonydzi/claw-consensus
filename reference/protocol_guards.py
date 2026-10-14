@@ -300,6 +300,10 @@ def sig_enforced(event, enforce_after, verify_result):
         return False, "bad-signature"
     if not enforce_after:
         return True, "dark"                          # audit-only phase
+    # Fail closed on a threshold we cannot read: `sig_enforce_after: true` used to become the
+    # string "True", which sorts after every real timestamp and grandfathered EVERYTHING.
+    if not isinstance(enforce_after, str) or (enforce_after != "*" and not _ISO_TS.match(enforce_after)):
+        enforce_after = "*"
     # enforce_after = "*" means STRICT: no grandfathering at all. A timestamp threshold trusts
     # the event's own `ts` to decide whether it is old enough to be grandfathered, and `ts` is
     # written by whoever wrote the line: a forged unsigned line simply backdates itself. Use a

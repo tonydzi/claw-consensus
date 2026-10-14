@@ -55,8 +55,9 @@ class Bus:
                    CONSENSUS_NO_BUS="1", PYTHONIOENCODING="utf-8",
                    LOCALAPPDATA=os.path.join(self.root, "_local", machine))
         for k in ("CONSENSUS_DRY", "CONSENSUS_SIG_ENFORCE_AFTER", "CONSENSUS_HUMAN_PRINCIPALS",
-                  "FLEET_SIGN_DISABLE"):
+                  "FLEET_SIGN_DISABLE", "FLEET_SIGNERS_DIR", "CONSENSUS_HUMAN_SIGNERS_DIR"):
             env.pop(k, None)
+        env.update(getattr(self, "pins", {}).get(machine, {}))
         return env
 
     def run(self, machine, *args):
@@ -393,6 +394,55 @@ class B_SignedHumanApproval(Base):
         p = self.bus.run(HUB, "approve", pid, "--envelope", as_owner)
         self.assertEqual(p.returncode, 1, p.stdout)
         self.assertIn("BAD signature", p.stdout)
+
+
+@unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
+class B_ApprovalAttacks(Base):
+    """Attacks on the approval found by adversarial review of the first cut of row B; each one
+    went through on that cut (a926c04) and is refused now."""
+
+    def test_pinned_human_key_survives_a_swapped_shared_key(self):   # red on first cut
+        owner = self.bus.human_key()
+        pinned = os.path.join(self.bus.root, "_hub_local_pins")
+        os.makedirs(pinned)
+        shutil.copy(owner + ".pub", os.path.join(pinned, "OWNER.pub"))
+        self.bus.pins = {HUB: {"CONSENSUS_HUMAN_SIGNERS_DIR": pinned}}
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "delete the production database", tier="2")
+        # a machine that can write the bus replaces OWNER.pub with its own key and signs
+        evil = self.bus.human_key("EVILTMP")
+        shutil.copy(evil + ".pub", os.path.join(self.bus.root, "_engine", "signers", "OWNER.pub"))
+        forged = self.bus.signed_envelope(pid, evil, principal="OWNER")
+        p = self.bus.run(HUB, "approve", pid, "--envelope", forged)
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 1)
+        # the real human, verified against the pin, still gets through
+        self.assertEqual(self.bus.run(HUB, "approve", pid, "--envelope",
+                                      self.bus.signed_envelope(pid, owner)).returncode, 0)
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 0)
+
+    def test_expired_approval_appended_by_hand_does_not_unlock_commit(self):   # red on first cut
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        stale = json.load(open(self.bus.signed_envelope(pid, key, ttl="-60"), encoding="utf-8"))
+        with open(os.path.join(self.bus.dd, "log-EVIL.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"event_id": "stale-ok", "proposal_id": self.bus.full_id(pid),
+                                 "type": "HUMAN_APPROVED", "actor": "EVIL", "seq": 50,
+                                 "ts": "2026-07-11T00:00:00.000000Z", "approval": stale}) + "\n")
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 1)
+
+    def test_unreadable_enforcement_setting_fails_closed(self):   # red on first cut
+        self.bus.init_key(HUB)
+        self.bus.config(sig_enforce_after=True)
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        with open(os.path.join(self.bus.dd, "log-attacker.jsonl"), "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"event_id": "forged", "proposal_id": self.bus.full_id(pid),
+                                 "type": "ACCEPT", "actor": LAPTOP, "seq": 9,
+                                 "ts": "2026-07-11T00:00:00.000000Z"}) + "\n")
+        st = self.bus.status(HUB, pid)
+        self.assertIn("[PROPOSED]", st)
+        self.assertIn("QUARANTINE", st)
 
 
 @unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
