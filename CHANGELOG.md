@@ -26,6 +26,8 @@ tied to the work.) Format: what shipped, in plain words.
   pull requests and went red on every join (the joiner is not supposed to regenerate `MEMBERS.md`).
   Now the author guard runs first, the freshness check only on `main`.
 
+- 2026-10-14, after v0.4.0 work landed on `main`: `fleet/JOIN.md` now tells a joiner to keep the fork alive until the PR merges and how to ping a maintainer. The lesson came from a live join PR, not from a design review.
+
 Measured on 2026-10-09: the A2A CLI 0.3.0 reads a static card over HTTPS (`a2a card get -a <raw url>`)
 and round-trips a message to an `--echo` server; on Windows it does not open a local path with a
 drive letter, so JOIN.md says "use the URL form".
