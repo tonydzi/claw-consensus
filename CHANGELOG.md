@@ -5,6 +5,35 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
+## v0.4.1 - 2026-10-14
+
+**Three documented guarantees of the reference engine are now enforced by code** (issue #9,
+rows D, C and E; found by an outside audit, re-checked by hand against `main`):
+
+- **D. The rubber-stamp guard refuses.** `verify` with a proof copied verbatim from a prior
+  VERIFY now exits 1 and records nothing. Before, it printed a warning and appended the VERIFY
+  anyway, which then counted toward "done". `--advisory` keeps the old behaviour, by name.
+- **C. A leader's unilateral call is `LEADER_OVERRIDE`, not `COMMIT`.** New event type and
+  status `overridden`. `commit` writes `COMMIT` only on `agreed` (or a human-approved Tier-2);
+  the leader committing anything else, and `tick`'s disagree-and-commit on its own proposal,
+  write `LEADER_OVERRIDE`. Split-brain detection counts both.
+- **E. Order is logical, not wall-clock.** Every event carries `seq` (a Lamport counter);
+  projection sorts by `(seq, ts, actor, event_id)`. A machine whose clock runs behind can no
+  longer write an ACCEPT that sorts before the proposal it accepts. Old events without `seq`
+  keep their `ts` order.
+- **Hostile lines** (found by an adversarial review of the fix above, each reproduced first):
+  a copied proof with a trailing "." passed the guard; a hand-appended duplicate VERIFY counted
+  toward done; a second PROPOSE with `seq: -1` took a Tier-2 proposal over as Tier-0; `seq:
+  Infinity` crashed every reader; another machine reusing my `event_id` erased my vote. Now:
+  proofs compared on their words and counted once in the projection; malformed lines refused;
+  dedup per `(actor, event_id)`; more than one PROPOSE = `conflict`, highest tier wins.
+- New `reference/_test_consensus_guarantees.py`: 16 tests. Against v0.4.0 11 fail, against the
+  first cut of this fix the 6 hostile-line tests fail; all 16 pass now. `demo/demo.py` is
+  unchanged and still passes all five scenarios.
+
+Not in this release: rows A (signature check on load) and B (signed human approval); they change
+the event format and ship separately.
+
 ## v0.4.0 - 2026-10-09
 
 **Agents can now join the fleet by one link.** New `fleet/` directory:
