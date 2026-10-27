@@ -50,3 +50,10 @@ references:
     year: 2021
     doi: "10.2139/ssrn.3849156"
     journal: "Finansovye rynki i banki (Financial Markets and Banks)"
+  - type: data
+    title: "Fleet telemetry aggregates, snapshot of 2026-10-03 (paper/telemetry/fleet-aggregates-2026-10-03.json)"
+    authors:
+      - family-names: Dziatkovskii
+        given-names: Anton
+    year: 2026
+    notes: "SHA-256 257c22aa8d594d1ad046f342b5c154a54b42d8a8f94367920f604b1868a050e7 (3586 bytes). The CAIN 2027 revision of the fleet report recomputes its numbers with paper/telemetry/cain-2027/."
