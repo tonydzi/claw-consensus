@@ -236,7 +236,9 @@ def scan(files):
             if not mid:
                 m2 = re.match(r"^#([0-9a-f]{6,})", body); mid = m2.group(1) if m2 else None
             first = re.sub(r"^#\S+\s*", "", body.split("\n")[0] if body else "").strip()
-            key = (m.group(1), m.group(2), m.group(3), first[:80])
+            # dedup key: sender, target, second and the message id when present (else the first 80 chars);
+            # panel finding 27.10: two distinct messages in one second with equal prefixes must not collapse
+            key = (m.group(1), m.group(2), m.group(3), mid or first[:80])
             if key not in seen:
                 seen[key] = {"s": m.group(1), "t": m.group(2), "ts": m.group(3), "id": mid, "first": first, "body": body}
 
