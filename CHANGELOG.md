@@ -5,6 +5,14 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
+## v0.4.1 - 2026-10-31
+
+**The CAIN 2027 revision is now reproducible from this repository.** New `paper/telemetry/cain-2027/`:
+
+- `fleet_cain_stats.py` recovers the rotated bus from the sync version store, infers per-node UTC offsets from the delivery-debt ledger, and computes Wilson and bootstrap intervals, a Mann-Kendall trend and a classifier audit (deduplicated by message id after a panel finding).
+- `make_macros.py` turns the JSON aggregates into LaTeX macros, so no number enters the paper without a JSON field; `make_figures.py` draws the figures.
+- `aggregates-cain-2027.json` holds the aggregates with host names mapped to roles, and `CITATION.cff` records the SHA-256 of the 2026-10-03 snapshot.
+
 ## v0.4.0 - 2026-10-09
 
 **Agents can now join the fleet by one link.** New `fleet/` directory:
