@@ -213,9 +213,9 @@ _ENVELOPE_SIGS = {}      # canonical envelope -> signature verdict, this process
 
 
 def _enforce_after():
-    env = os.environ.get("CONSENSUS_SIG_ENFORCE_AFTER")
-    if env is not None:
-        return env.strip()
+    env = (os.environ.get("CONSENSUS_SIG_ENFORCE_AFTER") or "").strip()
+    if env:                  # set but empty is common under launchd and CI: it pins nothing
+        return env
     v = _cfg().get("sig_enforce_after")
     if not v:
         return ""
@@ -855,10 +855,16 @@ def cmd_approval_request(idfrag, principal=None, ttl_min=15):
     if not principal:
         print("no human principal configured: set human_principals in consensus.json "
               "(or CONSENSUS_HUMAN_PRINCIPALS)"); return 2
+    try:
+        ttl = int(ttl_min)
+    except (TypeError, ValueError):
+        ttl = 0
+    if ttl <= 0:
+        print("--ttl-min must be a positive number of minutes"); return 2
     action = _action(evs)
     env = {"v": 1, "proposal_id": pid, "subject": action["subject"], "risk_tier": action["risk_tier"],
            "action": action, "action_digest": _digest_of(action), "human_principal": principal,
-           "expires_at": _iso(_now() + datetime.timedelta(minutes=int(ttl_min))),
+           "expires_at": _iso(_now() + datetime.timedelta(minutes=ttl)),
            "nonce": uuid.uuid4().hex}
     print(json.dumps(env, ensure_ascii=False, indent=2))
     return 0
@@ -873,9 +879,15 @@ def cmd_sign_approval(path, key, out=None):
     # This device has no ledger, but it can check that the words it shows hash to the digest it signs.
     if not isinstance(env.get("action"), dict) or _digest_of(env["action"]) != env.get("action_digest"):
         print("REFUSED: the action in this request does not hash to its action_digest; nothing signed."); return 1
-    print("You are approving (tier %s) %s\n   %s: %s" % (
+    if env.get("subject") != env["action"].get("subject") or env.get("risk_tier") != env["action"].get("risk_tier"):
+        print("REFUSED: subject or risk_tier in this request differ from its action; nothing signed."); return 1
+    lacking = [k for k in ENVELOPE_FIELDS if k != "sig" and not (isinstance(env.get(k), str) and env.get(k))]
+    if lacking:
+        print("REFUSED: this request lacks %s; nothing signed." % ", ".join(lacking)); return 1
+    print("You are approving (tier %s) %s\n   %s: %s\n   as %s, proposal %s, valid until %s" % (
         env["action"].get("risk_tier"), env["action"].get("subject"), env["action"].get("position_type"),
-        env["action"].get("text") or json.dumps(env["action"].get("details"), ensure_ascii=False)), file=sys.stderr)
+        env["action"].get("text") or json.dumps(env["action"].get("details"), ensure_ascii=False),
+        env["human_principal"], env["proposal_id"], env["expires_at"]), file=sys.stderr)
     env["sig"] = fs.sign_bytes(fs.canonical(env), key=key, ns=fs.NS_APPROVAL)
     text = json.dumps(env, ensure_ascii=False, indent=2)
     if out:

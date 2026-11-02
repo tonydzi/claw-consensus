@@ -110,19 +110,25 @@ def init(force=False):
     if os.path.exists(KEY) and not force:
         print("key already present: %s" % KEY)
     else:
-        for old in (KEY, KEY + ".pub"):        # ssh-keygen asks before overwriting and nobody can answer
+        # Generate beside the key, then swap: ssh-keygen stops to ask before overwriting, nobody can
+        # answer it, and a failed rotation must not cost the machine the only key it has.
+        tmp = KEY + ".new"
+        for old in (tmp, tmp + ".pub"):
             if os.path.exists(old):
                 os.remove(old)
         subprocess.run([_ssh_keygen(), "-t", "ed25519", "-N", "", "-C", "fleet:%s" % ME,
-                        "-f", KEY], check=True, capture_output=True, timeout=60)
+                        "-f", tmp], check=True, capture_output=True, timeout=60)
+        os.replace(tmp + ".pub", KEY + ".pub")
+        os.replace(tmp, KEY)
         print("created %s" % KEY)
     os.makedirs(SIGNERS, exist_ok=True)
     dst = os.path.join(SIGNERS, "%s.pub" % ME)
     with open(KEY + ".pub", encoding="utf-8") as src:
         pub = src.read()
     _retire_published(dst, pub)
-    with open(dst, "w", encoding="utf-8") as out:
+    with open(dst + ".tmp", "w", encoding="utf-8") as out:
         out.write(pub)
+    os.replace(dst + ".tmp", dst)         # a peer reading the registry never sees half a key
     print("published %s" % dst)
     return 0
 

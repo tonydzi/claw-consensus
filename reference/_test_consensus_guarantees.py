@@ -18,6 +18,7 @@ import unittest
 import subprocess
 import hashlib
 import datetime
+import uuid
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -87,18 +88,29 @@ class Bus:
 
     def signed_envelope(self, pid, key, ttl="15", principal=None, patch=None):
         """approval-request -> (optional edit) -> sign-approval with the human's key -> path."""
-        args = ["approval-request", pid, "--ttl-min", ttl]
+        minutes = int(ttl)
+        args = ["approval-request", pid, "--ttl-min", ttl if minutes > 0 else "15"]
         if principal:
             args += ["--principal", principal]
         req = self.run(HUB, *args)
         assert req.returncode == 0, req.stdout + req.stderr
         env = json.loads(req.stdout)
+        doctored = bool(patch) or minutes <= 0
+        if minutes <= 0:
+            past = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=minutes)
+            env["expires_at"] = past.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         if patch:
             env.update(patch)
-        ask = os.path.join(self.root, "ask-%s.json" % env["nonce"][:8])
+        ask = os.path.join(self.root, "ask-%s.json" % uuid.uuid4().hex[:8])
         with open(ask, "w", encoding="utf-8") as fh:
             json.dump(env, fh)
         out = ask.replace("ask-", "signed-")
+        if doctored:
+            # What the engine must refuse on its own: `sign-approval` would not sign this, another tool would.
+            env["sig"] = fleet_sign.sign_bytes(fleet_sign.canonical(env), key=key, ns=fleet_sign.NS_APPROVAL)
+            with open(out, "w", encoding="utf-8") as fh:
+                json.dump(env, fh)
+            return out
         p = self.run("OWNER-DEVICE", "sign-approval", ask, "--key", key, "--out", out)
         assert p.returncode == 0, p.stdout + p.stderr
         return out
@@ -781,9 +793,53 @@ class ReviewFindings_Approval(Base):
         p = self.bus.run(HUB, "approve", pid, "--envelope", self.bus.signed_envelope(pid, key))
         self.assertEqual(p.returncode, 0, p.stdout)
 
+    def test_ttl_must_be_a_positive_number(self):
+        self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        for bad in ("abc", "-1", "0"):
+            p = self.bus.run(HUB, "approval-request", pid, "--ttl-min", bad)
+            self.assertEqual(p.returncode, 2, p.stdout + p.stderr)
+            self.assertNotIn("Traceback", p.stderr)
+
+    def test_human_device_shows_terms_and_refuses_a_doctored_display(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "delete the production database", tier="2")
+        env = json.loads(self.bus.run(HUB, "approval-request", pid).stdout)
+        ask = os.path.join(self.bus.root, "ask-terms.json")
+        with open(ask, "w", encoding="utf-8") as fh:
+            json.dump(env, fh)
+        p = self.bus.run("OWNER-DEVICE", "sign-approval", ask, "--key", key)
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+        self.assertIn(env["expires_at"], p.stderr)
+        self.assertIn("OWNER", p.stderr)
+        for patch in ({"subject": "rename a tile"}, {"risk_tier": 0}, {"nonce": ""}):
+            with open(ask, "w", encoding="utf-8") as fh:
+                json.dump(dict(env, **patch), fh)
+            p = self.bus.run("OWNER-DEVICE", "sign-approval", ask, "--key", key)
+            self.assertEqual(p.returncode, 1, str(patch) + p.stdout)
+            self.assertNotIn('"sig"', p.stdout)
+
 
 @unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
 class ReviewFindings_Signatures(Base):
+
+    def test_failed_rotation_keeps_the_old_key(self):
+        self.bus.init_key(HUB)
+        key = os.path.join(self.bus.root, "_local", HUB, "claude-fleet", "machine_ed25519")
+        before = open(key, encoding="utf-8").read()
+        env = dict(self.bus.env(HUB), SSH_KEYGEN="/usr/bin/false")
+        p = subprocess.run([sys.executable, SIGNER, "init", "--force"], env=env, capture_output=True, timeout=120)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertEqual(open(key, encoding="utf-8").read(), before, "a failed rotation lost the private key")
+
+    def test_empty_env_pin_does_not_switch_enforcement_off(self):
+        self.bus.init_key(HUB)
+        self.bus.config(sig_enforce_after="*")
+        self.bus.pins = {HUB: {"CONSENSUS_SIG_ENFORCE_AFTER": ""}}
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.assertIn("enforce=*", self.bus.status(HUB, pid))
 
     def test_impossible_enforcement_timestamp_fails_closed(self):
         import protocol_guards as pg

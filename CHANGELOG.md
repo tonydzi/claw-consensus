@@ -58,9 +58,14 @@ tied to the work.) Format: what shipped, in plain words.
   A second round: a nonce copied onto a junk line could void or block a real approval (only a
   validly signed envelope recorded under its own proposal now spends a nonce), and pinning machine
   keys with `FLEET_SIGNERS_DIR` hid the human key (human keys come from the human pin or the shared registry).
+- **Found by a breaker panel of four outside models, each red first:** `init --force` deleted the
+  key before the new one existed (now generated beside it and swapped); an empty
+  `CONSENSUS_SIG_ENFORCE_AFTER` switched enforcement off (empty now pins nothing); `--ttl-min abc`
+  crashed; `sign-approval` hid the expiry and principal it was signing and signed a request whose
+  display differed from its action (now shown, and refused); a peer could read half a published key.
 - The signature tests no longer skip themselves on a loaded machine (a 20-second timeout on
   `ssh-keygen -h` read as "not installed").
-- `reference/_test_consensus_guarantees.py`: 59 tests, all pass. New failure mode **N**.
+- `reference/_test_consensus_guarantees.py`: 63 tests, all pass. New failure mode **N**.
   **Migration:** a Tier-2 COMMIT written with a free-text approval by a pre-release v0.4.2 or v0.5.0
   build now reads as unauthorized; engines before v0.4.2 wrote no `seq`, so their history reads as before.
 
