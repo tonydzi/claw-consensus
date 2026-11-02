@@ -5,7 +5,7 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
-## v0.4.1 - 2026-10-14
+## v0.4.2 - 2026-11-02
 
 **Three documented guarantees of the reference engine are now enforced by code** (issue #9,
 rows D, C and E; found by an outside audit, re-checked by hand against `main`):
@@ -34,6 +34,14 @@ rows D, C and E; found by an outside audit, re-checked by hand against `main`):
 Not in this release: rows A (signature check on load) and B (signed human approval); they change
 the event format and ship separately.
 
+## v0.4.1 - 2026-10-31
+
+**The CAIN 2027 revision is now reproducible from this repository.** New `paper/telemetry/cain-2027/`:
+
+- `fleet_cain_stats.py` recovers the rotated bus from the sync version store, infers per-node UTC offsets from the delivery-debt ledger, and computes Wilson and bootstrap intervals, a Mann-Kendall trend and a classifier audit (deduplicated by message id after a panel finding).
+- `make_macros.py` turns the JSON aggregates into LaTeX macros, so no number enters the paper without a JSON field; `make_figures.py` draws the figures.
+- `aggregates-cain-2027.json` holds the aggregates with host names mapped to roles, and `CITATION.cff` records the SHA-256 of the 2026-10-03 snapshot.
+
 ## v0.4.0 - 2026-10-09
 
 **Agents can now join the fleet by one link.** New `fleet/` directory:
@@ -54,6 +62,8 @@ the event format and ship separately.
 - Shadow-first run the same day caught the first defect: the registry-freshness check ran on
   pull requests and went red on every join (the joiner is not supposed to regenerate `MEMBERS.md`).
   Now the author guard runs first, the freshness check only on `main`.
+
+- 2026-10-14, after v0.4.0 work landed on `main`: `fleet/JOIN.md` now tells a joiner to keep the fork alive until the PR merges and how to ping a maintainer. The lesson came from a live join PR, not from a design review.
 
 Measured on 2026-10-09: the A2A CLI 0.3.0 reads a static card over HTTPS (`a2a card get -a <raw url>`)
 and round-trips a message to an `--echo` server; on Windows it does not open a local path with a
