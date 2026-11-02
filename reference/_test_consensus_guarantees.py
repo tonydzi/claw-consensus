@@ -829,10 +829,19 @@ class ReviewFindings_Signatures(Base):
         self.bus.init_key(HUB)
         key = os.path.join(self.bus.root, "_local", HUB, "claude-fleet", "machine_ed25519")
         before = open(key, encoding="utf-8").read()
-        env = dict(self.bus.env(HUB), SSH_KEYGEN="/usr/bin/false")
+        env = dict(self.bus.env(HUB), SSH_KEYGEN=sys.executable)   # exists everywhere, and rejects ssh-keygen's flags
         p = subprocess.run([sys.executable, SIGNER, "init", "--force"], env=env, capture_output=True, timeout=120)
         self.assertNotEqual(p.returncode, 0)
         self.assertEqual(open(key, encoding="utf-8").read(), before, "a failed rotation lost the private key")
+
+    def test_init_publishes_the_key_this_machine_can_sign_with(self):
+        self.bus.init_key(HUB)
+        local = os.path.join(self.bus.root, "_local", HUB, "claude-fleet", "machine_ed25519.pub")
+        other = self.bus.human_key("OTHERKEY")
+        shutil.copy(other + ".pub", local)     # a rotation interrupted between the two swaps
+        self.bus.init_key(HUB)
+        published = open(os.path.join(self.bus.root, "_engine", "signers", HUB + ".pub"), encoding="utf-8").read()
+        self.assertNotEqual(published.split()[:2], open(other + ".pub", encoding="utf-8").read().split()[:2])
 
     def test_empty_env_pin_does_not_switch_enforcement_off(self):
         self.bus.init_key(HUB)

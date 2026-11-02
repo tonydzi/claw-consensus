@@ -118,13 +118,15 @@ def init(force=False):
                 os.remove(old)
         subprocess.run([_ssh_keygen(), "-t", "ed25519", "-N", "", "-C", "fleet:%s" % ME,
                         "-f", tmp], check=True, capture_output=True, timeout=60)
+        os.replace(tmp, KEY)              # the private key decides; the public half follows from it
         os.replace(tmp + ".pub", KEY + ".pub")
-        os.replace(tmp, KEY)
         print("created %s" % KEY)
     os.makedirs(SIGNERS, exist_ok=True)
     dst = os.path.join(SIGNERS, "%s.pub" % ME)
-    with open(KEY + ".pub", encoding="utf-8") as src:
-        pub = src.read()
+    # Derived, not read from KEY.pub: an interrupted rotation can leave that file behind the key,
+    # and publishing it would make every event this machine signs read as forged.
+    pub = subprocess.run([_ssh_keygen(), "-y", "-f", KEY], check=True, capture_output=True,
+                         text=True, timeout=60).stdout
     _retire_published(dst, pub)
     with open(dst + ".tmp", "w", encoding="utf-8") as out:
         out.write(pub)
