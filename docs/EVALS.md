@@ -23,7 +23,7 @@ No arguments, no network, no packages, no API key. The demo runs the **published
 [`reference/consensus.py`](../reference/consensus.py), simulates two machines
 (`HUB-1` the leader and `LAPTOP-2` a peer) by flipping the `MACHINE_KEY` env
 between calls, and sets `CONSENSUS_NO_BUS=1` so there is no chat rail and no
-network in the loop. Exit code is `0` only if all five scenarios reach their
+network in the loop. Exit code is `0` only if all six scenarios reach their
 expected end-state, so `demo/demo.py` is also the engine's integration test.
 
 A captured run is committed at [`demo/example-run.txt`](../demo/example-run.txt) so
@@ -34,10 +34,15 @@ you can see the expected shape without running anything.
 | # | Scenario | What it proves | Expected end-state |
 |---|---|---|---|
 | A | Happy path | `propose -> counter -> accept -> commit -> verify x2` converges | `committed`, 2 distinct verifiers incl. 1 independent -> **done** |
-| B | Human gate | a Tier-2 action never auto-commits | auto-`escalated`; `commit` **refused** (exit 1) until `approve` is recorded |
+| B | Human gate | a Tier-2 action never auto-commits | auto-`escalated`; `commit` **refused** (exit 1); a free-text `approve` **refused** (exit 2); a signed approval envelope unlocks `commit` |
 | C | Tier-tripwire | a dangerous verb mislabelled Tier-0 is force-bumped | stored `risk_tier=2`, escalated, tripwire fired |
 | D | Split-brain | a partition where both sides commit is caught on heal | 2 committers -> `conflict` -> escalated to reconcile |
 | E | Corrupt line | a garbage shard line does not eat the events after it | the `COMMIT` written after the bad line is still read |
+| F | Forged line | with signatures enforced, a hand-written line is not state | the forged ACCEPT is quarantined (status stays `proposed`); the real signed ACCEPT reaches `agreed` |
+
+B and F need `ssh-keygen` (OpenSSH); without it they print SKIP with the reason. Scenario F (and
+B's signing) were added in v0.5.0, after the numbers below were measured; the timings in this file
+come from the earlier run described below and were not edited.
 
 ## The numbers (this machine)
 

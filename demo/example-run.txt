@@ -1,4 +1,4 @@
-claude-consensus demo -- offline, 0 tokens, stdlib only
+claw-consensus demo -- offline, 0 tokens, stdlib only
 engine: reference\consensus.py
 python: 3.12.10
 
@@ -8,32 +8,22 @@ A. HAPPY PATH  propose -> counter -> accept -> commit -> verify x2
 
   machine   verb      wall/ms  exit  result
   --------------------------------------------------------------------
-  LAPTOP-2  propose      78.9  0     PROPOSED #bc13f9bf tier=0: adopt night
-  HUB-1     respond      74.6  0     COUNTER #bc13f9bf: agree, but run it a
-  LAPTOP-2  respond      65.8  0     ACCEPT #bc13f9bf: 04:00 works
-  HUB-1     commit       68.9  0     COMMITTED #bc13f9bf: adopt nightly rei
-  HUB-1     verify       73.9  0     note: you COMMITTED #bc13f9bf -> this 
-  LAPTOP-2  verify       70.7  0     VERIFY #bc13f9bf by LAPTOP-2: confirme
+  LAPTOP-2  propose     175.7  0     PROPOSED #215a1e14 tier=0: adopt night
+  HUB-1     respond     141.6  0     COUNTER #215a1e14: agree, but run it a
+  LAPTOP-2  respond     120.3  0     ACCEPT #215a1e14: 04:00 works
+  HUB-1     commit      118.8  0     COMMITTED #215a1e14: adopt nightly rei
+  HUB-1     verify      161.4  0     note: you COMMITTED #215a1e14 -> this 
+  LAPTOP-2  verify      111.8  0     VERIFY #215a1e14 by LAPTOP-2: confirme
   --------------------------------------------------------------------
-  TOTAL                 432.8  (6 CLI calls, 0 LLM calls, 0 tokens)
+  TOTAL                 829.6  (6 CLI calls, 0 LLM calls, 0 tokens)
 
   end-state: 6 events, verifiers=['HUB-1', 'LAPTOP-2'] -> DONE (>=2 distinct, >=1 independent)
 
 ========================================================================
-B. HUMAN GATE  Tier-2 auto-escalates; commit REFUSED until approve
+B. HUMAN GATE  Tier-2 auto-escalates; commit REFUSED until a SIGNED human approval
 ========================================================================
 
-  machine   verb      wall/ms  exit  result
-  --------------------------------------------------------------------
-  HUB-1     propose      68.8  0     PROPOSED #9847050d tier=2: rotate the 
-  HUB-1     commit       65.1  1     REFUSED: Tier-2 needs a RECORDED human
-  HUB-1     approve      60.6  0     HUMAN-APPROVED #9847050d: owner approv
-  HUB-1     commit       64.5  0     COMMITTED #9847050d: rotate the produc
-  HUB-1     verify       64.5  0     note: you COMMITTED #9847050d -> this 
-  --------------------------------------------------------------------
-  TOTAL                 323.5  (5 CLI calls, 0 LLM calls, 0 tokens)
-
-  end-state: auto-escalated=True  commit-refused-before-approve=True  approved+committed=True -> GATE HELD
+  SKIP: no ssh-keygen here, a human approval cannot be signed
 
 ========================================================================
 C. TIER-TRIPWIRE  a Tier-0 label on a dangerous verb is force-bumped
@@ -41,10 +31,10 @@ C. TIER-TRIPWIRE  a Tier-0 label on a dangerous verb is force-bumped
 
   machine   verb      wall/ms  exit  result
   --------------------------------------------------------------------
-  HUB-1     propose      66.5  0     ⚠️ TIER-TRIPWIRE: matched 'delete' -> 
-  HUB-1     status       64.4  0     #07bc48bb  [ESCALATED]  tier=2  rounds
+  HUB-1     propose     115.7  0     ⚠️ TIER-TRIPWIRE: matched 'delete' -> 
+  HUB-1     status      121.8  0     #8ccf8cd6  [ESCALATED]  tier=2  rounds
   --------------------------------------------------------------------
-  TOTAL                 130.9  (2 CLI calls, 0 LLM calls, 0 tokens)
+  TOTAL                 237.5  (2 CLI calls, 0 LLM calls, 0 tokens)
 
   end-state: labelled tier-0, stored tier=2, tripwire-fired=True -> BUMPED + GATED
 
@@ -54,13 +44,13 @@ D. SPLIT-BRAIN  a partition makes both sides commit -> conflict caught on heal
 
   machine   verb      wall/ms  exit  result
   --------------------------------------------------------------------
-  HUB-1     propose      68.1  0     PROPOSED #fa8b5734 tier=0: switch embe
-  LAPTOP-2  respond      72.9  0     ACCEPT #fa8b5734: agreed
-  HUB-1     commit       77.4  0     COMMIT on hub island (partitioned)
-  LAPTOP-2  commit       72.1  0     COMMIT on laptop island (partitioned)
-  HUB-1     tick         73.4  0     #fa8b5734 SPLIT-BRAIN: committed by HU
+  HUB-1     propose     116.4  0     PROPOSED #7e00078c tier=0: switch embe
+  LAPTOP-2  respond     112.9  0     ACCEPT #7e00078c: agreed
+  HUB-1     commit      109.9  0     COMMIT on hub island (partitioned)
+  LAPTOP-2  commit      108.1  0     COMMIT on laptop island (partitioned)
+  HUB-1     tick        114.3  0     #7e00078c CONFLICT: conflicting decisi
   --------------------------------------------------------------------
-  TOTAL                 363.9  (5 CLI calls, 0 LLM calls, 0 tokens)
+  TOTAL                 561.6  (5 CLI calls, 0 LLM calls, 0 tokens)
 
   end-state: committers=['HUB-1', 'LAPTOP-2'] (conflict), escalated-for-reconcile=True -> CAUGHT
 
@@ -70,34 +60,39 @@ E. CORRUPT LINE  garbage in a shard must not eat later events
 
   machine   verb      wall/ms  exit  result
   --------------------------------------------------------------------
-  HUB-1     propose      69.4  0     PROPOSED #928bdb9c tier=0: add a healt
-  LAPTOP-2  respond      75.8  0     ACCEPT #928bdb9c: ok
-  HUB-1     commit       77.0  0     COMMITTED #928bdb9c: add a health dash
-  HUB-1     status      105.0  0     #928bdb9c  [COMMITTED]  tier=0  rounds
+  HUB-1     propose     116.2  0     PROPOSED #dafda1cc tier=0: add a healt
+  LAPTOP-2  respond     120.7  0     ACCEPT #dafda1cc: ok
+  HUB-1     commit      112.3  0     COMMITTED #dafda1cc: add a health dash
+  HUB-1     status      122.6  0     #dafda1cc  [COMMITTED]  tier=0  rounds
   --------------------------------------------------------------------
-  TOTAL                 327.2  (4 CLI calls, 0 LLM calls, 0 tokens)
+  TOTAL                 471.8  (4 CLI calls, 0 LLM calls, 0 tokens)
 
   end-state: corrupt line present in shard=True, COMMIT after it still read=True -> RESILIENT
+
+========================================================================
+F. FORGED LINE  signatures enforced: a hand-written line is quarantined, not state
+========================================================================
+
+  SKIP: no ssh-keygen here, machines cannot sign
 
 ========================================================================
 CORE COMPUTE  in-process state derivation over 50 proposals (no subprocess)
 ========================================================================
 
-  50 proposals / 250 events, merge+derive-all: 919.1 microseconds/pass
+  50 proposals / 250 events, merge+derive-all: 1991.0 microseconds/pass
 
 ========================================================================
 SUMMARY
 ========================================================================
-  [PASS]  A happy-path        432.8 ms  (6 CLI calls)
-  [PASS]  B human-gate        323.5 ms  (5 CLI calls)
-  [PASS]  C tripwire          130.9 ms  (2 CLI calls)
-  [PASS]  D split-brain       363.9 ms  (5 CLI calls)
-  [PASS]  E corrupt-line      327.2 ms  (4 CLI calls)
+  [PASS]  A happy-path        829.6 ms  (6 CLI calls)
+  [SKIP]  B human-gate          0.0 ms  (0 CLI calls)
+  [PASS]  C tripwire          237.5 ms  (2 CLI calls)
+  [PASS]  D split-brain       561.6 ms  (5 CLI calls)
+  [PASS]  E corrupt-line      471.8 ms  (4 CLI calls)
+  [SKIP]  F forged-line         0.0 ms  (0 CLI calls)
 
-  core compute: 50 proposals / 250 events, merge+derive-all: 919.1 microseconds/pass
+  core compute: 50 proposals / 250 events, merge+derive-all: 1991.0 microseconds/pass
   LLM calls across the whole demo: 0        tokens: 0
   every number above is deterministic file I/O + Python startup
-
-  machine-readable timings -> demo/last-run.json
 
   RESULT: ALL SCENARIOS PASS

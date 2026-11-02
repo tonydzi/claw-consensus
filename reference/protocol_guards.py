@@ -285,6 +285,21 @@ def shadow_report(record_dir):
 # which is the whole fleet on day one.
 
 
+_ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z?$")
+
+
+def _real_ts(s):
+    """The moment s names, or None. Matching the shape is not enough: 9999-99-99T99:99:99Z has the
+    right shape, sorts above every real time, and as a threshold grandfathered everything."""
+    if not isinstance(s, str) or not _ISO_TS.match(s):
+        return None
+    body = s.rstrip("Z")
+    try:
+        return datetime.datetime.strptime(body, "%Y-%m-%dT%H:%M:%S.%f" if "." in body else "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+
+
 def sig_enforced(event, enforce_after, verify_result):
     """Should this event be trusted, given the enforcement threshold?
 
@@ -297,7 +312,18 @@ def sig_enforced(event, enforce_after, verify_result):
         return False, "bad-signature"
     if not enforce_after:
         return True, "dark"                          # audit-only phase
-    if (event.get("ts") or "") <= enforce_after:
+    # Fail closed on a threshold we cannot read: `sig_enforce_after: true` used to become the
+    # string "True", which sorts after every real timestamp and grandfathered EVERYTHING.
+    threshold = None if enforce_after == "*" else _real_ts(enforce_after)
+    if threshold is None:
+        enforce_after = "*"
+    # enforce_after = "*" means STRICT: no grandfathering at all. A timestamp threshold trusts
+    # the event's own `ts` to decide whether it is old enough to be grandfathered, and `ts` is
+    # written by whoever wrote the line: a forged unsigned line simply backdates itself. Use a
+    # timestamp only while legacy unsigned history still matters, then switch to "*".
+    # A `ts` that is not a well-formed timestamp is never grandfathered ("!" sorts before "2").
+    ts = _real_ts(event.get("ts"))
+    if enforce_after != "*" and ts is not None and ts <= threshold:
         return True, "grandfathered"
     if verify_result is None:
         return False, "unsigned-after-enforcement"
@@ -417,6 +443,11 @@ def _selftest():
     assert reasons == ["bad-signature", "unsigned-after-enforcement"], reasons
     # and the pre-threshold event is never punished retroactively
     assert all(q["id"] != "old1" for q in armed["quarantined"]), armed
+    # a forged unsigned line cannot grandfather itself with a junk ts that sorts low ...
+    assert sig_enforced({"ts": "!"}, "2026-07-20T00:00:00", None)[0] is False
+    # ... and "*" (strict) grandfathers nothing, however old the ts claims to be
+    strict = audit_signatures(evs, verify, "*")
+    assert sorted(q["id"] for q in strict["quarantined"]) == ["bad1", "new1", "old1"], strict
 
     print("SELFTEST OK - 4 guards:\n"
           "  arbiter election  : failover on stale-only evidence, all peers agree, "

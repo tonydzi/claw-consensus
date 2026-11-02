@@ -21,13 +21,15 @@ is small; the invariants are the hard part, and they are written down.
 - `reference/bus_send.py` — **the single entry point** for machine-to-machine messages. Both rails
   fire from here, which is what makes a single-rail send impossible rather than discouraged.
 - `reference/sync_monitor.py`, `reference/fleet_sign.py`, `reference/protocol_guards.py`.
-- `demo/demo.py` — five self-checking offline scenarios.
+- `demo/demo.py` — six self-checking offline scenarios.
+- `reference/_test_consensus_guarantees.py` — one test per documented guarantee (issue #9).
 - `docs/FAILURE-MODES.md` — every known failure, its root cause, and the guard that closed it.
 
 ## How to verify a change
 
 ```bash
-python demo/demo.py                  # all five scenarios, offline, self-checking
+python demo/demo.py                  # all six scenarios, offline, self-checking
+python reference/_test_consensus_guarantees.py   # the guarantees, each shown red before its fix
 python demo/demo.py --json out.json  # machine-readable timings
 ```
 

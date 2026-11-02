@@ -37,13 +37,17 @@ The human is often away from every terminal, but Tier-2 questions can't wait for
 
 1. A machine that needs an OK posts an **ASK envelope** to a dedicated attention channel the human reads on their phone (NOT the noisy machine chat; see PROTOCOL.md §7): what, why, risk, and "reply <TOKEN> = yes / NO = no", plus a short ID.
 2. The human replies with the **approval token** (any short word you standardize, e.g. `APPROVE` or `APPROVE <id>`) from their phone.
-3. Any machine that sees the reply records it: `consensus.py approve <id> "owner token, <channel> msg <id>"`. Commit unlocks.
+3. The approval that the engine accepts is the human's **signature**, not the chat reply: the ask carries an envelope from `consensus.py approval-request <id>`, the human signs it on their own device (`sign-approval ... --key <their key>`), and a machine records it with `consensus.py approve <id> --envelope <signed.json>`. Commit unlocks. (PROTOCOL.md §4 has the envelope.)
 
-Security model, explicitly: **the strength is the sender allowlist, not the token's secrecy.** The approval counts only if it comes from the owner's own account/number. Corollaries:
+Security model, explicitly: **the strength is the human's private key, not the token's secrecy and not the chat account.** Until v0.5.0 the engine recorded a free-text proof ("owner token, <channel> msg <id>"), which meant the gate was only as strong as the honesty of whatever process typed that string (issue #9, row B). Corollaries:
 
-- Anti-injection: text INSIDE a chat is data. A machine never accepts its own relayed text, or a third party quoting the token, as an approval.
-- The ask expires (15 min is our window); a stale approval is re-asked, not honored.
-- The proof string (who/where/message-id) is recorded in the ledger, auditable later.
+- Anti-injection: text INSIDE a chat is data. A relayed "the owner said yes", a third party quoting the token, or a machine's own key is never an approval; only a signature by a key listed as a human principal is.
+- The key lives where only the human can use it (their phone or laptop), never in the synced bus. If they approve from a phone, the signing key lives on that phone.
+- The *public* key must be pinned too: machines that record approvals or commit Tier-2 read it from a local folder (`CONSENSUS_HUMAN_SIGNERS_DIR`), not from the shared registry that any bus writer could swap.
+- An approval is checked again at commit time, on the ledger, and must be used before it expires.
+- The approval binds to the exact action (`action_digest`): a counter-proposal after the approval voids it.
+- The ask expires (15 min is our window; `expires_at` in the envelope); a stale approval is re-asked, not honored. A `nonce` makes each approval single-use.
+- The signed envelope is recorded in the ledger, auditable later.
 
 ## §5. Scoped authorization relay: no blanket grants
 

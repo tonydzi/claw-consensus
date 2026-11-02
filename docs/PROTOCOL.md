@@ -26,8 +26,13 @@ Event shape:
 ```json
 {"event_id": "1f0c...", "proposal_id": "9a2b...", "type": "PROPOSE",
  "actor": "HUB-1", "seq": 41, "ts": "2026-07-02T10:15:03.412000Z",
- "subject": "adopt nightly reindex at 03:30", "risk_tier": 0}
+ "subject": "adopt nightly reindex at 03:30", "risk_tier": 0,
+ "signer": "HUB-1", "sig": "-----BEGIN SSH SIGNATURE-----..."}
 ```
+
+`signer`/`sig` are present when the writing machine has a fleet key (`fleet_sign.py init`). The
+signature covers every other field (canonical JSON, sorted keys). A reader checks it **before** the
+event can enter state; see §6a, Guard 7.
 
 ## §3. Verbs and state machine
 
@@ -66,7 +71,37 @@ The proposer labels the tier, and that is the weakest link of the whole design: 
 
 Tripwire lesson: word-start matching, not plain substring. The term `send` used to fire on the identifier `bus_send.py`, spamming false Tier-2 escalations. Now word-terms match only at word starts (`send money` yes, `bus_send` no), while punctuation-led terms (`.env`, `rm -`) keep substring matching. The fix removes a false-positive class only; real hits still catch.
 
-**Tier-2 closure.** Escalation alone is not enough: our first version had cmd_commit hard-refuse tier>=2, so even human-approved proposals sat ESCALATED forever. The `approve <id> "<proof>"` verb records the human's OK (who/where/message-id, proof string required), and only then does `commit` unlock. Auto-commit without a recorded approval stays banned.
+**Tier-2 closure.** Escalation alone is not enough: our first version had cmd_commit hard-refuse tier>=2, so even human-approved proposals sat ESCALATED forever. The `approve` verb records the human's OK, and only then does `commit` unlock. Auto-commit without a recorded approval stays banned.
+
+**What counts as the human's OK (since v0.5.0).** Until v0.5.0 `approve <id> "<proof>"` took any non-empty string, so any process able to type "owner approved" could unlock a Tier-2 commit (issue #9, row B). Now it takes only a **signed approval envelope**:
+
+```json
+{"v": 1, "proposal_id": "9a2b...", "subject": "rotate the production API token", "risk_tier": 2,
+ "action_digest": "sha256 of the position on the table", "human_principal": "OWNER",
+ "expires_at": "2026-07-02T10:30:03.412000Z", "nonce": "c41e...", "sig": "-----BEGIN SSH SIGNATURE-----..."}
+```
+
+1. A machine runs `approval-request <id>` and sends the printed envelope to the human.
+2. The human signs it **on a device only they control**, with their own key:
+   `sign-approval ask.json --key <their private key> --out signed.json` (namespace `fleet-approval`).
+3. A machine records it: `approve <id> --envelope signed.json`.
+
+It is refused, with the reason printed, if: the principal is not in `human_principals`
+(config, or `CONSENSUS_HUMAN_PRINCIPALS` pinned locally) · the signature does not verify against
+`_engine/signers/<principal>.pub` · it names another proposal · `action_digest` no longer matches
+(a COUNTER after the approval voids it: the human approved a different action) · it expired · its
+nonce was already used. A machine's own key cannot pass: it is not a human principal, and the
+approval namespace differs from the event-signing one.
+
+These checks run **on the ledger, at commit time**, not only inside `approve`: a machine can
+append a `HUMAN_APPROVED` line without calling `approve` at all. So an approval must be **used
+before it expires** (commit within the window, default 15 min); after that, re-ask.
+
+**Pin the human's key.** By default the public key is read from `_engine/signers/`, a shared
+folder: any machine that can write the bus can replace `OWNER.pub` with its own key and sign "as
+the owner". Set `CONSENSUS_HUMAN_SIGNERS_DIR` to a local folder holding the human keys on every
+machine that records approvals or commits Tier-2; `approve` prints a note while the key still
+comes from the shared registry.
 
 ## §5. The deterministic driver: `tick`
 
@@ -160,6 +195,48 @@ Two distinctions carry the whole design:
 - **rollout order is not optional:** sign everything and verify nothing → a readable audit
   command → only then set an enforcement timestamp, forward in time. Flip straight to enforcement
   and you quarantine every machine without a key yet, which on day one is all of them.
+
+**Enforced in the engine since v0.5.0** (issue #9, row A; before that, nothing in `consensus.py`
+checked a signature and any line in any `log-*.jsonl` became state):
+
+- `consensus.py` signs every event it writes when the machine has a key, and checks every line it
+  reads **before** projection. Policy per line: bad signature → quarantine, always · signed by a
+  key other than the event's own `actor` → quarantine, always · unsigned → trusted only while
+  dark; quarantined once `sig_enforce_after` is set.
+- `sig_enforce_after = "*"` is strict: nothing is grandfathered. A timestamp grandfathers older
+  unsigned lines, but `ts` is written by whoever wrote the line, so a forged line can backdate
+  itself past the threshold; use a timestamp only during the rollout, then `"*"`.
+- `status` and `list` print `ledger trust: enforce=... signed-ok=N unsigned-trusted=M
+  quarantined=K` and one `QUARANTINE` row per refused line (unparsable lines included), so a
+  refusal is never silent. In dark mode the line says `DARK`.
+- Every signed line is verified on every call. `CONSENSUS_VERIFY_CACHE=1` keeps good verdicts in a
+  local file per registry fingerprint (a new key or a revocation retires it), for long ledgers.
+  That file is not authenticated, so turning it on trusts every process under this account.
+- `fleet_sign.py init --force` rotates a key: the old public key stays as
+  `<machine>.retired-<n>.pub` and keeps verifying history. A compromised key is a different event:
+  add `<machine>.retired-<n>` (or `<machine>`, for every key it ever had) to `REVOKED.txt`.
+- Under enforcement a machine that cannot sign writes nothing: the verb exits 3 instead of
+  reporting a success that every reader would quarantine.
+- The human gate also holds on read: a decision on a Tier-2 proposal enters state only if a valid
+  signed approval of the position it decided precedes it, whoever signed the decision line.
+  **What that proves, and what it does not.** It proves a human signed that exact action, and that
+  the approval precedes the decision in declared order, so a machine key alone cannot invent a
+  Tier-2 decision. It does not prove fresh consent: `seq` and `ts` are declared by the writer, so a
+  key holder can spend a real approval late, backdate past its expiry, or order the decision before
+  a later COUNTER. Comparing against the final position would let any writer void a settled
+  decision with one COUNTER, and comparing expiry to the reader's clock would expire every real
+  commit. Closing this needs a trusted observer (a sequencer or a timestamped receipt), which this
+  protocol does not have.
+- The shared config is writable by any machine that can write the bus. Pin
+  `CONSENSUS_SIG_ENFORCE_AFTER` (and `CONSENSUS_HUMAN_PRINCIPALS`) in the environment of machines
+  you trust more than the shared folder. The same holds for the key registry itself:
+  `FLEET_SIGNERS_DIR` points `fleet_sign` at a local copy of the machine keys.
+- An enforcement value that is neither `"*"` nor a timestamp (say `true`) fails **closed**, as
+  strict. It used to become the string `"True"`, which grandfathered every event.
+- Dedup is per `(actor, event_id)`, and malformed lines are quarantined with reason `malformed`
+  (see §2), so a signed but hostile machine cannot erase another machine's event or crash the
+  readers; what it can still do is write events under its own name, which is what signatures are
+  for.
 
 ## §7. Escalation channels: keep the alarm away from the noise
 
