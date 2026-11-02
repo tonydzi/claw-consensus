@@ -127,6 +127,8 @@ def init(force=False):
     # and publishing it would make every event this machine signs read as forged.
     pub = subprocess.run([_ssh_keygen(), "-y", "-f", KEY], check=True, capture_output=True,
                          text=True, timeout=60).stdout
+    with open(KEY + ".pub", "w", encoding="utf-8") as out:
+        out.write(pub)
     _retire_published(dst, pub)
     with open(dst + ".tmp", "w", encoding="utf-8") as out:
         out.write(pub)
