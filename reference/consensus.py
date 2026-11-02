@@ -504,7 +504,9 @@ def _without_unauthorized_decisions(evs):
     state only if a valid signed approval of the position it decided precedes it; otherwise it is
     quarantined and the proposal stays open. Lines older than the gate are read as before: in the
     dark phase an event without seq (engines before v0.4.2), under a timestamp threshold whatever
-    that threshold grandfathers. Strict mode ("*") grandfathers nothing."""
+    that threshold grandfathers. Strict mode ("*") grandfathers nothing.
+    Limit: seq and ts are declared by the writer, so this proves a human signed the action decided,
+    not that the approval was still fresh when the line was written (docs/PROTOCOL.md)."""
     enforce = _enforce_after()
     out = []
     for i, e in enumerate(evs):

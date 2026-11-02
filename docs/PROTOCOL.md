@@ -219,6 +219,14 @@ checked a signature and any line in any `log-*.jsonl` became state):
   reporting a success that every reader would quarantine.
 - The human gate also holds on read: a decision on a Tier-2 proposal enters state only if a valid
   signed approval of the position it decided precedes it, whoever signed the decision line.
+  **What that proves, and what it does not.** It proves a human signed that exact action, and that
+  the approval precedes the decision in declared order, so a machine key alone cannot invent a
+  Tier-2 decision. It does not prove fresh consent: `seq` and `ts` are declared by the writer, so a
+  key holder can spend a real approval late, backdate past its expiry, or order the decision before
+  a later COUNTER. Comparing against the final position would let any writer void a settled
+  decision with one COUNTER, and comparing expiry to the reader's clock would expire every real
+  commit. Closing this needs a trusted observer (a sequencer or a timestamped receipt), which this
+  protocol does not have.
 - The shared config is writable by any machine that can write the bus. Pin
   `CONSENSUS_SIG_ENFORCE_AFTER` (and `CONSENSUS_HUMAN_PRINCIPALS`) in the environment of machines
   you trust more than the shared folder. The same holds for the key registry itself:
