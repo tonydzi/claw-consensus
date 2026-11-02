@@ -43,10 +43,10 @@ tied to the work.) Format: what shipped, in plain words.
   ledger at commit time, so an approval must be used before it expires; `sig_enforce_after:
   true` disabled enforcement → unreadable values fail closed as strict. Malformed lines now go
   to the quarantine (`malformed`) instead of being skipped.
-- `reference/_test_consensus_guarantees.py`: 31 tests. Against v0.4.1 the 15 new ones fail;
+- `reference/_test_consensus_guarantees.py`: 31 tests. Against v0.4.2 the 15 new ones fail;
   all 31 pass now. New failure mode **N**.
 
-## v0.4.1 - 2026-10-14
+## v0.4.2 - 2026-11-02
 
 **Three documented guarantees of the reference engine are now enforced by code** (issue #9,
 rows D, C and E; found by an outside audit, re-checked by hand against `main`):
@@ -68,12 +68,30 @@ rows D, C and E; found by an outside audit, re-checked by hand against `main`):
   Infinity` crashed every reader; another machine reusing my `event_id` erased my vote. Now:
   proofs compared on their words and counted once in the projection; malformed lines refused;
   dedup per `(actor, event_id)`; more than one PROPOSE = `conflict`, highest tier wins.
-- New `reference/_test_consensus_guarantees.py`: 16 tests. Against v0.4.0 11 fail, against the
-  first cut of this fix the 6 hostile-line tests fail; all 16 pass now. `demo/demo.py` is
-  unchanged and still passes all five scenarios.
+- **Found by the review bots on the pull request, each reproduced first:** a peer not yet upgraded
+  wrote no `seq`, so its ACCEPT sorted before the PROPOSE it answered (now placed by its `ts`
+  among sequenced events); a retried `commit` wrote a false `LEADER_OVERRIDE` over a real COMMIT
+  (now idempotent); `commit` wrote a decision on a `conflict` row (now refused); a late PROPOSE
+  reopened a settled decision (now ignored if ordered after it); a non-string `proof`, `text` or
+  an infinite `risk_tier` crashed every reader (now refused or read as Tier-2); the highest legal
+  `seq` made every later event unreadable (the clock now saturates). `tick` no longer appends a
+  new ESCALATE for the same conflict on every run, and `paper/telemetry/fleet_telemetry.py` counts
+  `LEADER_OVERRIDE` as a decision, with a separate `overridden` total.
+- New `reference/_test_consensus_guarantees.py`: 31 tests. Against v0.4.0 11 of the first 16 fail,
+  against the first cut of this fix the 6 hostile-line tests fail, and 11 of the review-bot tests
+  failed before their fixes; all 31 pass now. `demo/demo.py` is unchanged and still passes all
+  five scenarios.
 
 Not in this release: rows A (signature check on load) and B (signed human approval); they change
 the event format and ship separately.
+
+## v0.4.1 - 2026-10-31
+
+**The CAIN 2027 revision is now reproducible from this repository.** New `paper/telemetry/cain-2027/`:
+
+- `fleet_cain_stats.py` recovers the rotated bus from the sync version store, infers per-node UTC offsets from the delivery-debt ledger, and computes Wilson and bootstrap intervals, a Mann-Kendall trend and a classifier audit (deduplicated by message id after a panel finding).
+- `make_macros.py` turns the JSON aggregates into LaTeX macros, so no number enters the paper without a JSON field; `make_figures.py` draws the figures.
+- `aggregates-cain-2027.json` holds the aggregates with host names mapped to roles, and `CITATION.cff` records the SHA-256 of the 2026-10-03 snapshot.
 
 ## v0.4.0 - 2026-10-09
 
@@ -95,6 +113,8 @@ the event format and ship separately.
 - Shadow-first run the same day caught the first defect: the registry-freshness check ran on
   pull requests and went red on every join (the joiner is not supposed to regenerate `MEMBERS.md`).
   Now the author guard runs first, the freshness check only on `main`.
+
+- 2026-10-14, after v0.4.0 work landed on `main`: `fleet/JOIN.md` now tells a joiner to keep the fork alive until the PR merges and how to ping a maintainer. The lesson came from a live join PR, not from a design review.
 
 Measured on 2026-10-09: the A2A CLI 0.3.0 reads a static card over HTTPS (`a2a card get -a <raw url>`)
 and round-trips a message to an `--echo` server; on Windows it does not open a local path with a
