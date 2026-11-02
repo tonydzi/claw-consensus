@@ -842,6 +842,8 @@ class ReviewFindings_Signatures(Base):
         self.bus.init_key(HUB)
         published = open(os.path.join(self.bus.root, "_engine", "signers", HUB + ".pub"), encoding="utf-8").read()
         self.assertNotEqual(published.split()[:2], open(other + ".pub", encoding="utf-8").read().split()[:2])
+        self.assertEqual(open(local, encoding="utf-8").read().split()[:2], published.split()[:2],
+                         "the local public key stayed behind the key it belongs to")
 
     def test_empty_env_pin_does_not_switch_enforcement_off(self):
         self.bus.init_key(HUB)
