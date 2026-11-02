@@ -244,6 +244,143 @@ class Hostile_Lines(Base):
                             "ts": "2026-07-11T00:00:00.000000Z", "proof": "unrelated"})
         self.assertIn("[REJECTED]", self.bus.status(HUB, pid))
 
+    def test_non_string_proof_does_not_crash_readers(self):   # review finding on #11
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        for i, bad in enumerate((5, True, {"a": 1})):
+            self.append("EVIL", {"event_id": "np%d" % i, "proposal_id": self.full_id(pid),
+                                 "type": "VERIFY", "actor": "EVIL", "seq": 9 + i,
+                                 "ts": "2026-07-11T00:00:00.000000Z", "proof": bad})
+        for verb in (("list",), ("tick",), ("pending",), ("status", pid)):
+            p = self.bus.run(HUB, *verb)
+            self.assertEqual(p.returncode, 0, "%s: %s" % (verb, p.stderr))
+
+    def test_non_string_text_does_not_crash_status(self):   # review finding on #11, same class
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.append("EVIL", {"event_id": "nt", "proposal_id": self.full_id(pid), "type": "COUNTER",
+                             "actor": "EVIL", "seq": 9, "ts": "2026-07-11T00:00:00.000000Z", "text": 7})
+        p = self.bus.run(HUB, "status", pid)
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def test_infinite_tier_does_not_crash_readers(self):
+        with open(os.path.join(self.bus.dd, "log-EVIL.jsonl"), "w", encoding="utf-8") as fh:
+            fh.write('{"event_id": "it", "proposal_id": "p-inf", "type": "PROPOSE", "actor": "EVIL", '
+                     '"seq": 1, "risk_tier": Infinity, "ts": "2026-07-11T00:00:00.000000Z", "subject": "x"}\n')
+        p = self.bus.run(HUB, "status", "p-inf")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("tier=2", p.stdout)
+
+    def test_blank_and_identical_proofs_never_reach_done(self):   # review finding on #11: holds already
+        pid = self.committed()
+        for i, (who, proof) in enumerate(((HUB, ""), (LAPTOP, ""), (HUB, "same"), (LAPTOP, "same!"))):
+            self.append(who, {"event_id": "bl%d" % i, "proposal_id": self.full_id(pid), "type": "VERIFY",
+                              "actor": who, "seq": 40 + i, "ts": "2026-07-11T00:00:00.000000Z", "proof": proof})
+        self.assertNotIn("DONE", self.bus.status(HUB, pid))
+
+    def test_late_propose_does_not_reopen_a_settled_decision(self):   # review finding on #11
+        pid = self.committed()
+        self.append("EVIL", {"event_id": "late", "proposal_id": self.full_id(pid), "type": "PROPOSE",
+                             "actor": "EVIL", "seq": 999, "risk_tier": 2,
+                             "ts": "2026-07-11T00:00:00.000000Z", "subject": "reopen"})
+        st = self.bus.status(HUB, pid)
+        self.assertIn("[COMMITTED]", st)
+        self.assertIn("tier=0", st)
+        self.bus.run(HUB, "tick")
+        self.assertNotIn("ESCALATE", [e["type"] for e in self.bus.events()])
+
+    def test_propose_before_the_decision_is_still_a_conflict(self):
+        pid = self.committed()
+        commit = next(e for e in self.bus.events() if e["type"] == "COMMIT")
+        self.append("EVIL", {"event_id": "early", "proposal_id": self.full_id(pid), "type": "PROPOSE",
+                             "actor": "EVIL", "seq": commit["seq"] - 1, "risk_tier": 2,
+                             "ts": "2026-07-11T00:00:00.000000Z", "subject": "contested"})
+        self.assertIn("[CONFLICT]", self.bus.status(HUB, pid))
+
+    def test_ceiling_seq_does_not_erase_later_events(self):   # review finding on #11
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.append("EVIL", {"event_id": "max", "proposal_id": "other", "type": "PROPOSE",
+                             "actor": "EVIL", "seq": 2 ** 53 - 1, "risk_tier": 0,
+                             "ts": "2000-01-01T00:00:00.000000Z", "subject": "poison"})
+        p = self.bus.run(LAPTOP, "respond", pid, "accept", "ok")
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("[AGREED]", self.bus.status(HUB, pid))
+        accept = next(e for e in self.bus.events(LAPTOP) if e["type"] == "ACCEPT")
+        self.assertEqual(accept["seq"], 2 ** 53 - 1, "the clock saturates, it never writes an unreadable seq")
+
+
+class Retry_And_Conflict(Base):
+    """A retried verb must not change history; a contested row must not get a decision of record."""
+
+    def test_repeated_commit_is_idempotent(self):   # review finding on #11
+        pid = self.committed()
+        p = self.bus.run(HUB, "commit", pid)
+        self.assertEqual(p.returncode, 0, p.stdout)
+        types = [e["type"] for e in self.bus.events()]
+        self.assertEqual(types.count("COMMIT"), 1)
+        self.assertNotIn("LEADER_OVERRIDE", types)
+        self.assertIn("[COMMITTED]", self.bus.status(HUB, pid))
+
+    def test_repeated_commit_after_override_is_idempotent(self):
+        pid = self.bus.propose(LAPTOP, "switch embeddings backend")
+        self.bus.run(HUB, "commit", pid)
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 0)
+        self.assertEqual([e["type"] for e in self.bus.events()].count("LEADER_OVERRIDE"), 1)
+
+    def test_commit_refuses_a_conflict_on_tier0(self):   # review finding on #11
+        pid = self.bus.propose(LAPTOP, "switch embeddings backend")
+        full = next(e["proposal_id"] for e in self.bus.events() if e["proposal_id"].startswith(pid))
+        with open(os.path.join(self.bus.dd, "log-EVIL.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"event_id": "second", "proposal_id": full, "type": "PROPOSE",
+                                 "actor": "EVIL", "seq": 9, "risk_tier": 0,
+                                 "ts": "2026-07-11T00:00:00.000000Z", "subject": "other"}) + "\n")
+        p = self.bus.run(HUB, "commit", pid)
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertNotIn("LEADER_OVERRIDE", [e["type"] for e in self.bus.events()])
+
+    def test_tick_escalates_a_conflict_once(self):
+        pid = self.bus.propose(LAPTOP, "switch embeddings backend")
+        full = next(e["proposal_id"] for e in self.bus.events() if e["proposal_id"].startswith(pid))
+        with open(os.path.join(self.bus.dd, "log-EVIL.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"event_id": "second", "proposal_id": full, "type": "PROPOSE",
+                                 "actor": "EVIL", "seq": 9, "risk_tier": 0,
+                                 "ts": "2026-07-11T00:00:00.000000Z", "subject": "other"}) + "\n")
+        self.bus.run(HUB, "tick")
+        self.bus.run(HUB, "tick")
+        self.assertEqual([e["type"] for e in self.bus.events()].count("ESCALATE"), 1)
+
+
+class MixedVersion(Base):
+    """A rolling upgrade: one machine writes seq, the other has not been upgraded yet."""
+
+    def strip_seq(self, machine, etype):
+        self.bus.rewrite(machine, lambda ev: {k: v for k, v in ev.items()
+                                              if not (k == "seq" and ev["type"] == etype)})
+
+    def test_old_peers_accept_still_counts(self):   # review finding on #11
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.bus.run(LAPTOP, "respond", pid, "accept", "ok")
+        self.strip_seq(LAPTOP, "ACCEPT")
+        self.assertIn("[AGREED]", self.bus.status(HUB, pid))
+
+    def test_old_peers_counter_is_the_latest_position(self):   # review finding on #11
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.bus.run(LAPTOP, "respond", pid, "counter", "two tiles")
+        self.strip_seq(LAPTOP, "COUNTER")
+        self.assertIn("[COUNTERED]", self.bus.status(HUB, pid))
+
+    def test_old_peers_accept_needs_no_override(self):
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.bus.run(LAPTOP, "respond", pid, "accept", "ok")
+        self.strip_seq(LAPTOP, "ACCEPT")
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 0)
+        self.assertNotIn("LEADER_OVERRIDE", [e["type"] for e in self.bus.events()])
+
+    def test_order_is_the_same_on_every_machine(self):
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        self.bus.run(LAPTOP, "respond", pid, "counter", "two tiles")
+        self.bus.run(HUB, "respond", pid, "accept", "two")
+        self.strip_seq(LAPTOP, "COUNTER")
+        self.assertEqual(self.bus.status(HUB, pid), self.bus.status(LAPTOP, pid))
+
 
 if __name__ == "__main__":
     print("engine under test: %s" % ENGINE)

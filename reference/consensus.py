@@ -45,7 +45,7 @@ leader/round_cap/timeout_min; optional "peer_timeout_min": {"<MACHINE>": min} = 
 (a sleeping laptop gets a longer window than the always-on hub) -- effective deadline = slowest
 peer we are WAITING ON.
 """
-import os, sys, json, glob, uuid, datetime, shlex, subprocess, re
+import os, sys, json, glob, uuid, datetime, shlex, subprocess, re, bisect
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -188,8 +188,27 @@ def _all_events():
                 continue
             seen.add(key)
             out.append(ev)
+    _place_unsequenced(out)
     out.sort(key=_order_key)
     return out
+
+
+def _place_unsequenced(evs):
+    """A rolling upgrade mixes writers: a peer still on the old engine writes no seq. Read as 0, its
+    ACCEPT would sort before the PROPOSE it answers. Such an event inherits the highest clock among
+    the sequenced events at or before its own ts, so it lands where its wall clock puts it, the
+    same on every machine. A slow clock on an unupgraded peer can still misplace it: that is the
+    old engine's limit, and it ends when that peer upgrades."""
+    sequenced = sorted((e["ts"], _seq(e)) for e in evs if e.get("seq") is not None)
+    stamps, peak, peaks = [], 0, []
+    for ts, seq in sequenced:
+        peak = max(peak, seq)
+        stamps.append(ts)
+        peaks.append(peak)
+    for e in evs:
+        if e.get("seq") is None:
+            i = bisect.bisect_right(stamps, e["ts"])
+            e["_placed_seq"] = peaks[i - 1] if i else 0
 
 
 SEQ_MAX = 2 ** 53        # beyond this a JSON number stops being an exact integer everywhere
@@ -207,6 +226,9 @@ def _well_formed(ev):
             return False
     if ev.get("type") not in TYPES:
         return False
+    for k in ("subject", "text", "proof"):     # readers slice and lowercase these
+        if not isinstance(ev.get(k), (str, type(None))):
+            return False
     return _seq(ev) is not None
 
 
@@ -230,8 +252,10 @@ def _order_key(ev):
     a laptop running five minutes slow wrote an ACCEPT that sorted BEFORE the proposal it
     accepted. `ts` now only breaks ties between concurrent events (same seq, neither saw the
     other), then actor and event_id make the order total and identical on every machine.
-    Events written before seq existed carry seq 0 and keep their old ts order."""
-    return (_seq(ev) or 0, ev.get("ts", ""), ev.get("actor", ""), ev.get("event_id", ""))
+    Events written without seq are placed by _place_unsequenced; a ledger with no seq at all keeps
+    its old ts order."""
+    clock = ev["_placed_seq"] if "_placed_seq" in ev else (_seq(ev) or 0)
+    return (clock, ev.get("ts", ""), ev.get("actor", ""), ev.get("event_id", ""))
 
 
 def _by_proposal():
@@ -246,13 +270,17 @@ def _state(evs):
     evs = sorted(evs, key=_order_key)
     proposes = [e for e in evs if e.get("type") == "PROPOSE"]
     prop = proposes[0] if proposes else evs[0]
+    # A PROPOSE ordered after the decision of record cannot have shaped it, so it neither raises the
+    # tier nor reopens the row. One ordered before it was on the table: that stays a conflict.
+    first_decision = next((i for i, e in enumerate(evs) if e.get("type") in DECISION_TYPES), len(evs))
+    live_proposes = [e for e in evs[:first_decision] if e.get("type") == "PROPOSE"] or proposes
     s = {
         "proposal_id": prop.get("proposal_id"),
         "subject": prop.get("subject", ""),
         "proposer": prop.get("actor", "?"),
         # fail-safe: if a proposal_id ever carries more than one PROPOSE, the HIGHEST tier wins,
         # so a second PROPOSE can never talk a Tier-2 action down to Tier-0
-        "tier": max([_tier(e) for e in proposes] or [_tier(prop)]),
+        "tier": max([_tier(e) for e in live_proposes] or [_tier(prop)]),
         "created": prop.get("ts"),
         "rounds": sum(1 for e in evs if e.get("type") in ("PROPOSE", "COUNTER")),
         "accepts": sorted({e["actor"] for e in evs if e.get("type") == "ACCEPT"}),
@@ -280,9 +308,9 @@ def _state(evs):
     s["conflict"] = None
     if len(s["committers"]) > 1:
         s["conflict"] = "conflicting decisions by %s" % ", ".join(s["committers"])
-    elif len(proposes) > 1:
+    elif len(live_proposes) > 1:
         s["conflict"] = "%d PROPOSE events for one proposal_id (by %s)" % (
-            len(proposes), ", ".join(sorted({e.get("actor", "?") for e in proposes})))
+            len(live_proposes), ", ".join(sorted({e.get("actor", "?") for e in live_proposes})))
     if s["conflict"]:
         s["status"] = "conflict"
     elif "COMMIT" in types:
@@ -304,14 +332,15 @@ def _state(evs):
 
 def _tier(ev):
     try:
-        return int(ev.get("risk_tier", 0) or 0)
-    except (TypeError, ValueError):
+        tier = int(ev.get("risk_tier", 0) or 0)
+    except (TypeError, ValueError, OverflowError):
         return 2             # an unreadable tier is treated as the dangerous one
+    return tier if tier >= 0 else 2
 
 
 def _norm_proof(p):
     """A proof reduced to its words: case, punctuation and spacing do not make a copy new."""
-    return " ".join(re.findall(r"[0-9a-z]+", (p or "").lower()))
+    return " ".join(re.findall(r"[0-9a-z]+", p.lower())) if isinstance(p, str) else ""
 
 
 def _counted_verifiers(evs):
@@ -390,8 +419,13 @@ def _emit(ev, extra="", alert_human=False):
 def _next_seq():
     """Lamport clock: 1 + the highest seq in any shard I can read. Monotonic per machine (my own
     shard is part of what I read) and causal across machines (an answer always outranks the
-    position it answers)."""
-    return 1 + max([_seq(e) or 0 for e in _all_events()] or [0])
+    position it answers). It saturates below SEQ_MAX: a line carrying the highest legal seq must
+    not make every later event unreadable, so past it the order degrades to wall clock instead."""
+    next_seq = 1 + max([_seq(e) or 0 for e in _all_events()] or [0])
+    if next_seq >= SEQ_MAX:
+        print("   ⚠️ logical clock at its ceiling (a ledger line carries seq %d): order falls back to ts."
+              % (SEQ_MAX - 1), file=sys.stderr)
+    return min(next_seq, SEQ_MAX - 1)
 
 
 def _mkevent(etype, proposal_id, **kw):
@@ -487,6 +521,11 @@ def cmd_commit(idfrag):
     if not pid:
         return 2
     s = _state(evs)
+    if s["status"] == "conflict":
+        print("REFUSED: #%s is in conflict (%s) -> the human reconciles it; no decision of record on a contested row."
+              % (pid[:8], s["conflict"])); return 1
+    if s["status"] in ("committed", "overridden"):
+        print("already decided #%s [%s] (idempotent skip)" % (pid[:8], s["status"])); return 0
     if s["tier"] >= 2 and not _human_approvals(evs):
         print("REFUSED: Tier-2 needs a RECORDED human approval first -> `approve <id> \"<proof>\"`; auto-commit stays banned."); return 1
     leader = ME == _cfg()["leader"]
@@ -623,7 +662,9 @@ def cmd_tick():
         #    auto-resolve; hand to the human for reconciliation (the leader's log is authoritative).
         if s["status"] == "conflict":
             print("#%s CONFLICT: %s -> escalate for reconciliation" % (pid[:8], s["conflict"]))
-            if not os.environ.get("CONSENSUS_DRY"):
+            already = any(e.get("type") == "ESCALATE" and (e.get("text") or "").startswith("conflict:")
+                          for e in s["events"])
+            if not already and not os.environ.get("CONSENSUS_DRY"):
                 ev = _mkevent("ESCALATE", pid, subject=s["subject"], text="conflict: %s" % s["conflict"])
                 _append(ev); _emit(ev, extra="❓ the ledger diverged -- the human must reconcile")
             acted += 1; continue

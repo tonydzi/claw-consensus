@@ -27,9 +27,19 @@ rows D, C and E; found by an outside audit, re-checked by hand against `main`):
   Infinity` crashed every reader; another machine reusing my `event_id` erased my vote. Now:
   proofs compared on their words and counted once in the projection; malformed lines refused;
   dedup per `(actor, event_id)`; more than one PROPOSE = `conflict`, highest tier wins.
-- New `reference/_test_consensus_guarantees.py`: 16 tests. Against v0.4.0 11 fail, against the
-  first cut of this fix the 6 hostile-line tests fail; all 16 pass now. `demo/demo.py` is
-  unchanged and still passes all five scenarios.
+- **Found by the review bots on the pull request, each reproduced first:** a peer not yet upgraded
+  wrote no `seq`, so its ACCEPT sorted before the PROPOSE it answered (now placed by its `ts`
+  among sequenced events); a retried `commit` wrote a false `LEADER_OVERRIDE` over a real COMMIT
+  (now idempotent); `commit` wrote a decision on a `conflict` row (now refused); a late PROPOSE
+  reopened a settled decision (now ignored if ordered after it); a non-string `proof`, `text` or
+  an infinite `risk_tier` crashed every reader (now refused or read as Tier-2); the highest legal
+  `seq` made every later event unreadable (the clock now saturates). `tick` no longer appends a
+  new ESCALATE for the same conflict on every run, and `paper/telemetry/fleet_telemetry.py` counts
+  `LEADER_OVERRIDE` as a decision, with a separate `overridden` total.
+- New `reference/_test_consensus_guarantees.py`: 31 tests. Against v0.4.0 11 of the first 16 fail,
+  against the first cut of this fix the 6 hostile-line tests fail, and 11 of the review-bot tests
+  failed before their fixes; all 31 pass now. `demo/demo.py` is unchanged and still passes all
+  five scenarios.
 
 Not in this release: rows A (signature check on load) and B (signed human approval); they change
 the event format and ship separately.

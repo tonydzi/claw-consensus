@@ -30,6 +30,7 @@ import statistics as st
 import sys
 from datetime import datetime
 
+DECISION_TYPES = ("COMMIT", "LEADER_OVERRIDE")
 ROLE = {}  # host -> role, filled from --roles json; unknown hosts become node-N
 
 
@@ -93,27 +94,29 @@ def consensus_stats(bus):
     for e in ev.values():
         P[e["proposal_id"]].append(e)
     types = collections.Counter(e["type"] for e in ev.values())
-    committed = [p for p, es in P.items() if any(e["type"] == "COMMIT" for e in es)]
+    # A decision of record is a COMMIT or, since v0.4.2, a LEADER_OVERRIDE (see reference/consensus.py).
+    # Both count as decided; "overridden" says how many of them nobody agreed to.
+    committed = [p for p, es in P.items() if any(e["type"] in DECISION_TYPES for e in es)]
     t2 = [p for p, es in P.items() if any(e["type"] == "PROPOSE" and str(e.get("risk_tier")) == "2" for e in es)]
     t2_commit = t2_unapproved = 0
     for p in t2:
         es = sorted(P[p], key=lambda e: ts(e["ts"]))
-        cs = [e for e in es if e["type"] == "COMMIT"]
+        cs = [e for e in es if e["type"] in DECISION_TYPES]
         if cs:
             t2_commit += 1
             if not any(e["type"] == "HUMAN_APPROVED" and ts(e["ts"]) <= ts(cs[0]["ts"]) for e in es):
                 t2_unapproved += 1
-    dual = sum(1 for es in P.values() if len({e["actor"] for e in es if e["type"] == "COMMIT"}) >= 2)
+    dual = sum(1 for es in P.values() if len({e["actor"] for e in es if e["type"] in DECISION_TYPES}) >= 2)
     verified = 0
     for p in committed:
-        commiters = {e["actor"] for e in P[p] if e["type"] == "COMMIT"}
+        commiters = {e["actor"] for e in P[p] if e["type"] in DECISION_TYPES}
         vs = {e["actor"] for e in P[p] if e["type"] == "VERIFY"}
         if len(vs) >= 2 and vs - commiters:
             verified += 1
     lat = []
     for p in committed:
         pr = [ts(e["ts"]) for e in P[p] if e["type"] == "PROPOSE"]
-        cm = [ts(e["ts"]) for e in P[p] if e["type"] == "COMMIT"]
+        cm = [ts(e["ts"]) for e in P[p] if e["type"] in DECISION_TYPES]
         if pr and cm and min(cm) >= min(pr):
             lat.append((min(cm) - min(pr)).total_seconds() / 60)
     esc = sorted((sum(1 for e in es if e["type"] == "ESCALATE") for es in P.values()), reverse=True)
@@ -127,6 +130,7 @@ def consensus_stats(bus):
         "writers": len({e["actor"] for e in ev.values()}),
         "proposals_by_month": dict(sorted(prop_month.items())), "propose_tiers": dict(tiers),
         "committed": len(committed),
+        "overridden": sum(1 for es in P.values() if any(e["type"] == "LEADER_OVERRIDE" for e in es)),
         "rejected": sum(1 for es in P.values() if any(e["type"] == "REJECT" for e in es)),
         "tier2_proposals": len(t2), "tier2_committed": t2_commit,
         "tier2_committed_without_prior_approval": t2_unapproved,
@@ -205,14 +209,16 @@ def selftest():
            ("e2", "p1", "HUMAN_APPROVED", "A", "2026-07-01T00:05:00Z", None),
            ("e3", "p1", "COMMIT", "A", "2026-07-01T00:10:00Z", None),
            ("e4", "p2", "PROPOSE", "B", "2026-07-02T00:00:00Z", 2),
-           ("e5", "p2", "COMMIT", "B", "2026-07-02T00:01:00Z", None)]
+           ("e5", "p2", "COMMIT", "B", "2026-07-02T00:01:00Z", None),
+           ("e6", "p3", "PROPOSE", "A", "2026-07-03T00:00:00Z", 0),
+           ("e7", "p3", "LEADER_OVERRIDE", "B", "2026-07-03T00:30:00Z", None)]
     with open(os.path.join(d, "_decisions", "log-A.jsonl"), "w") as fh:
         for e in evs:
             fh.write(json.dumps(dict(zip(["event_id", "proposal_id", "type", "actor", "ts", "risk_tier"], e))) + "\n")
         fh.write("{corrupt\n")
     c = consensus_stats(d)
-    ok = (c["events"] == 5 and c["tier2_committed"] == 2 and c["tier2_committed_without_prior_approval"] == 1
-          and c["dual_commit_distinct_actors"] == 0)
+    ok = (c["events"] == 7 and c["tier2_committed"] == 2 and c["tier2_committed_without_prior_approval"] == 1
+          and c["dual_commit_distinct_actors"] == 0 and c["committed"] == 3 and c["overridden"] == 1)
     print("selftest", "OK" if ok else "FAIL", json.dumps(c)[:200])
     return 0 if ok else 1
 
