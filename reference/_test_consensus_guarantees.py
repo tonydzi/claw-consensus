@@ -16,6 +16,9 @@ import shutil
 import tempfile
 import unittest
 import subprocess
+import hashlib
+import datetime
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE = os.environ.get("CONSENSUS_ENGINE") or os.path.join(HERE, "consensus.py")
@@ -26,11 +29,9 @@ import fleet_sign  # noqa: E402  (to locate a working ssh-keygen; the engine und
 
 
 def _have_ssh_keygen():
-    try:
-        subprocess.run([fleet_sign._ssh_keygen(), "-h"], capture_output=True, timeout=20)
-        return True
-    except Exception:
-        return False
+    # Presence only. Timing `ssh-keygen -h` under a timeout read a loaded machine as "no ssh-keygen"
+    # and silently skipped every signature test, which is how a green run stops meaning anything.
+    return bool(shutil.which(fleet_sign._ssh_keygen()))
 
 
 HAVE_SSH = _have_ssh_keygen()
@@ -648,6 +649,171 @@ class A_SignaturesOnLoad(Base):
     def test_dark_mode_says_it_is_dark(self):
         pid = self.bus.propose(HUB, "add a health dashboard tile")
         self.assertIn("DARK", self.bus.status(HUB, pid))
+
+@unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
+class ReviewFindings_Approval(Base):
+    """Found by the review bots on the signed-approval pull request; each was red before its fix."""
+
+    def full_ledger_line(self, machine, ev):
+        """Sign ev with `machine`'s own key, exactly as a process holding that key could."""
+        code = ("import sys,json; sys.path.insert(0,%r); import fleet_sign as f; "
+                "print(json.dumps(f.sign_event(json.loads(sys.argv[1]))))" % HERE)
+        sig = json.loads(subprocess.run([sys.executable, "-c", code, json.dumps(ev)],
+                                        env=self.bus.env(machine), capture_output=True,
+                                        text=True, check=True).stdout)
+        return dict(ev, sig=sig, signer=machine)
+
+    def append(self, name, ev):
+        with open(os.path.join(self.bus.dd, "log-%s.jsonl" % name), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(ev) + "\n")
+
+    def test_displayed_subject_must_match_the_action(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "delete the production database", tier="2")
+        for patch in ({"subject": "rename a dashboard tile"}, {"risk_tier": 0}):
+            p = self.bus.run(HUB, "approve", pid, "--envelope",
+                             self.bus.signed_envelope(pid, key, patch=patch))
+            self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 1)
+
+    def test_envelope_shows_the_position_being_approved(self):
+        self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        self.bus.run(LAPTOP, "respond", pid, "counter", "rotate ALL tokens instead")
+        env = json.loads(self.bus.run(HUB, "approval-request", pid).stdout)
+        self.assertEqual(env["action"]["text"], "rotate ALL tokens instead")
+        self.assertEqual(env["action"]["position_type"], "COUNTER")
+
+    def test_human_device_refuses_a_display_that_does_not_hash_to_the_digest(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "delete the production database", tier="2")
+        env = json.loads(self.bus.run(HUB, "approval-request", pid).stdout)
+        env["action"]["subject"] = "rename a dashboard tile"
+        ask = os.path.join(self.bus.root, "ask-doctored.json")
+        with open(ask, "w", encoding="utf-8") as fh:
+            json.dump(env, fh)
+        p = self.bus.run("OWNER-DEVICE", "sign-approval", ask, "--key", key)
+        self.assertEqual(p.returncode, 1, p.stdout)
+        self.assertNotIn('"sig"', p.stdout)
+
+    def test_non_string_nonce_is_refused_and_cannot_poison_the_row(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        bad = self.bus.signed_envelope(pid, key, patch={"nonce": ["x"]})
+        p = self.bus.run(HUB, "approve", pid, "--envelope", bad)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertNotIn("Traceback", p.stderr)
+        self.append("EVIL", {"event_id": "np", "proposal_id": self.bus.full_id(pid), "type": "HUMAN_APPROVED",
+                             "actor": "EVIL", "seq": 50, "ts": "2026-07-11T00:00:00.000000Z",
+                             "approval": json.load(open(bad, encoding="utf-8"))})
+        p = self.bus.run(HUB, "commit", pid)
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertNotIn("Traceback", p.stderr)
+        p = self.bus.run(HUB, "approve", pid, "--envelope", self.bus.signed_envelope(pid, key))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+    def test_signed_commit_without_approval_is_not_a_decision(self):
+        self.bus.init_key(HUB)
+        self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"], sig_enforce_after="*")
+        pid = self.bus.propose(HUB, "delete the production database", tier="2")
+        full = self.bus.full_id(pid)
+        self.append(HUB, self.full_ledger_line(HUB, {
+            "event_id": "bypass", "proposal_id": full, "type": "COMMIT", "actor": HUB, "seq": 90,
+            "ts": "2026-11-02T00:00:00.000000Z", "subject": "delete the production database"}))
+        st = self.bus.status(HUB, pid)
+        self.assertNotIn("[COMMITTED]", st)
+        self.assertIn("tier2-decision-without-approval", st)
+
+    def test_commit_with_a_real_approval_survives_the_approvals_expiry(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        soon = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=4)
+                ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        env = self.bus.signed_envelope(pid, key, patch={"expires_at": soon})
+        self.assertEqual(self.bus.run(HUB, "approve", pid, "--envelope", env).returncode, 0)
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 0)
+        time.sleep(4.5)
+        self.assertIn("[COMMITTED]", self.bus.status(HUB, pid))
+
+    def test_hostile_tier_does_not_crash_the_approval_path(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        with open(os.path.join(self.bus.dd, "log-EVIL.jsonl"), "w", encoding="utf-8") as fh:
+            fh.write('{"event_id": "ht", "proposal_id": "p-hostile", "type": "PROPOSE", "actor": "EVIL", '
+                     '"seq": 1, "risk_tier": "many", "ts": "2026-07-11T00:00:00.000000Z", "subject": "x"}\n')
+        req = self.bus.run(HUB, "approval-request", "p-hostile")
+        self.assertEqual(req.returncode, 0, req.stderr)
+        self.assertEqual(json.loads(req.stdout)["risk_tier"], 2)
+        p = self.bus.run(HUB, "approve", "p-hostile", "--envelope", self.bus.signed_envelope("p-hostile", key))
+        self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
+
+
+@unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
+class ReviewFindings_Signatures(Base):
+
+    def test_impossible_enforcement_timestamp_fails_closed(self):
+        import protocol_guards as pg
+        for bad in ("9999-99-99T99:99:99Z", "2026-13-45T00:00:00Z"):
+            self.assertFalse(pg.sig_enforced({"ts": "2026-01-01T00:00:00Z"}, bad, None)[0], bad)
+        self.assertFalse(pg.sig_enforced({"ts": "2026-13-45T00:00:00Z"},
+                                         "2027-01-01T00:00:00Z", None)[0], "impossible event ts")
+        self.assertTrue(pg.sig_enforced({"ts": "2026-01-01T00:00:00.5Z"},
+                                        "2027-01-01T00:00:00Z", None)[0], "real grandfathering stays")
+
+    def test_verdict_cache_is_not_proof_by_default(self):
+        self.bus.init_key(HUB)
+        self.bus.init_key(LAPTOP)
+        self.bus.init_key("ATTACKER")
+        self.bus.config(sig_enforce_after="*")
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        ev = {"event_id": "cache-1", "proposal_id": self.bus.full_id(pid), "type": "ACCEPT",
+              "actor": LAPTOP, "seq": 99, "ts": "2026-07-11T00:00:00.000000Z", "text": "ok"}
+        code = ("import sys,json; sys.path.insert(0,%r); import fleet_sign as f; ev=json.loads(sys.argv[1]); "
+                "print(json.dumps({'sig':f.sign_event(ev),'fp':f.registry_fingerprint()}))" % HERE)
+        out = json.loads(subprocess.run([sys.executable, "-c", code, json.dumps(ev)],
+                                        env=self.bus.env("ATTACKER"), capture_output=True,
+                                        text=True, check=True).stdout)
+        line = json.dumps(dict(ev, sig=out["sig"], signer=LAPTOP))
+        with open(os.path.join(self.bus.dd, "log-ATTACKER.jsonl"), "a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+        keydir = os.path.join(self.bus.root, "_local", HUB, "claude-fleet")
+        with open(os.path.join(keydir, "verified-events.txt"), "a", encoding="utf-8") as fh:
+            fh.write("%s %s\n" % (out["fp"], hashlib.sha256(line.encode("utf-8")).hexdigest()))
+        st = self.bus.status(HUB, pid)
+        self.assertNotIn("[AGREED]", st, "a line nobody verified was trusted because of a local file")
+        self.assertIn("bad-signature", st)
+
+    def test_key_rotation_keeps_history_and_revocation_still_kills_it(self):
+        self.bus.init_key(HUB)
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        subprocess.run([sys.executable, SIGNER, "init", "--force"], env=self.bus.env(HUB), check=True,
+                       capture_output=True, timeout=120)
+        st = self.bus.status(HUB, pid)
+        self.assertIn("[PROPOSED]", st, "a routine rotation erased a signed proposal")
+        self.assertNotIn("bad-signature", st)
+        self.assertEqual(self.bus.run(LAPTOP, "respond", pid, "accept", "ok").returncode, 0)
+        self.bus.run(HUB, "respond", pid, "counter", "signed with the new key")
+        self.assertNotIn("bad-signature", self.bus.status(HUB, pid))
+        with open(os.path.join(self.bus.root, "_engine", "signers", "REVOKED.txt"), "w", encoding="utf-8") as fh:
+            fh.write(HUB + ".retired-1\n")
+        st = self.bus.status(HUB, pid)
+        self.assertIn("bad-signature", st, "a revoked old key must stop counting")
+
+    def test_unsigned_write_is_refused_under_enforcement(self):
+        self.bus.init_key(HUB)
+        self.bus.config(sig_enforce_after="*")
+        pid = self.bus.propose(HUB, "add a health dashboard tile")
+        before = len(self.bus.events())
+        p = self.bus.run(LAPTOP, "respond", pid, "accept", "ok")       # LAPTOP has no key
+        self.assertNotEqual(p.returncode, 0, p.stdout)
+        self.assertEqual(len(self.bus.events()), before, "a line nobody will ever trust was written")
+        self.assertNotIn("ACCEPT #", p.stdout)
 
 
 if __name__ == "__main__":

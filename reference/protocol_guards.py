@@ -288,6 +288,18 @@ def shadow_report(record_dir):
 _ISO_TS = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z?$")
 
 
+def _real_ts(s):
+    """The moment s names, or None. Matching the shape is not enough: 9999-99-99T99:99:99Z has the
+    right shape, sorts above every real time, and as a threshold grandfathered everything."""
+    if not isinstance(s, str) or not _ISO_TS.match(s):
+        return None
+    body = s.rstrip("Z")
+    try:
+        return datetime.datetime.strptime(body, "%Y-%m-%dT%H:%M:%S.%f" if "." in body else "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
+
+
 def sig_enforced(event, enforce_after, verify_result):
     """Should this event be trusted, given the enforcement threshold?
 
@@ -302,15 +314,16 @@ def sig_enforced(event, enforce_after, verify_result):
         return True, "dark"                          # audit-only phase
     # Fail closed on a threshold we cannot read: `sig_enforce_after: true` used to become the
     # string "True", which sorts after every real timestamp and grandfathered EVERYTHING.
-    if not isinstance(enforce_after, str) or (enforce_after != "*" and not _ISO_TS.match(enforce_after)):
+    threshold = None if enforce_after == "*" else _real_ts(enforce_after)
+    if threshold is None:
         enforce_after = "*"
     # enforce_after = "*" means STRICT: no grandfathering at all. A timestamp threshold trusts
     # the event's own `ts` to decide whether it is old enough to be grandfathered, and `ts` is
     # written by whoever wrote the line: a forged unsigned line simply backdates itself. Use a
     # timestamp only while legacy unsigned history still matters, then switch to "*".
     # A `ts` that is not a well-formed timestamp is never grandfathered ("!" sorts before "2").
-    ts = event.get("ts") or ""
-    if enforce_after != "*" and _ISO_TS.match(ts) and ts <= enforce_after:
+    ts = _real_ts(event.get("ts"))
+    if enforce_after != "*" and ts is not None and ts <= threshold:
         return True, "grandfathered"
     if verify_result is None:
         return False, "unsigned-after-enforcement"

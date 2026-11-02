@@ -209,8 +209,16 @@ checked a signature and any line in any `log-*.jsonl` became state):
 - `status` and `list` print `ledger trust: enforce=... signed-ok=N unsigned-trusted=M
   quarantined=K` and one `QUARANTINE` row per refused line (unparsable lines included), so a
   refusal is never silent. In dark mode the line says `DARK`.
-- Verified lines are cached locally (never synced) per registry fingerprint, so a long ledger is
-  not re-verified on every call; a new key or a revocation retires the cache.
+- Every signed line is verified on every call. `CONSENSUS_VERIFY_CACHE=1` keeps good verdicts in a
+  local file per registry fingerprint (a new key or a revocation retires it), for long ledgers.
+  That file is not authenticated, so turning it on trusts every process under this account.
+- `fleet_sign.py init --force` rotates a key: the old public key stays as
+  `<machine>.retired-<n>.pub` and keeps verifying history. A compromised key is a different event:
+  add `<machine>.retired-<n>` (or `<machine>`, for every key it ever had) to `REVOKED.txt`.
+- Under enforcement a machine that cannot sign writes nothing: the verb exits 3 instead of
+  reporting a success that every reader would quarantine.
+- The human gate also holds on read: a decision on a Tier-2 proposal enters state only if a valid
+  signed approval of the position it decided precedes it, whoever signed the decision line.
 - The shared config is writable by any machine that can write the bus. Pin
   `CONSENSUS_SIG_ENFORCE_AFTER` (and `CONSENSUS_HUMAN_PRINCIPALS`) in the environment of machines
   you trust more than the shared folder. The same holds for the key registry itself:

@@ -60,6 +60,7 @@ NS = "fleet"
 # Human approvals are signed in their own namespace, so a machine's event signature can never be
 # replayed as a human's approval of anything (and vice versa). See consensus.py `approve`.
 NS_APPROVAL = "fleet-approval"
+RETIRED = ".retired-"    # <machine>.retired-<n>.pub: a rotated-out key that still verifies history
 
 
 def _disabled():
@@ -109,15 +110,38 @@ def init(force=False):
     if os.path.exists(KEY) and not force:
         print("key already present: %s" % KEY)
     else:
+        for old in (KEY, KEY + ".pub"):        # ssh-keygen asks before overwriting and nobody can answer
+            if os.path.exists(old):
+                os.remove(old)
         subprocess.run([_ssh_keygen(), "-t", "ed25519", "-N", "", "-C", "fleet:%s" % ME,
                         "-f", KEY], check=True, capture_output=True, timeout=60)
         print("created %s" % KEY)
     os.makedirs(SIGNERS, exist_ok=True)
     dst = os.path.join(SIGNERS, "%s.pub" % ME)
-    with open(KEY + ".pub", encoding="utf-8") as src, open(dst, "w", encoding="utf-8") as out:
-        out.write(src.read())
+    with open(KEY + ".pub", encoding="utf-8") as src:
+        pub = src.read()
+    _retire_published(dst, pub)
+    with open(dst, "w", encoding="utf-8") as out:
+        out.write(pub)
     print("published %s" % dst)
     return 0
+
+
+def _retire_published(dst, pub):
+    """Rotation is not revocation: events signed by the old key are still that machine's history.
+    The old public key stays verifiable as <machine>.retired-<n>.pub. If the key was compromised,
+    say so: add that name (or the machine's name, for every key it ever had) to REVOKED.txt."""
+    try:
+        old = open(dst, encoding="utf-8").read()
+    except OSError:
+        return
+    if old.split()[:2] == pub.split()[:2]:
+        return
+    n = 1 + len(glob.glob(os.path.join(os.path.dirname(dst), "%s%s*.pub" % (ME, RETIRED))))
+    retired = os.path.join(os.path.dirname(dst), "%s%s%d.pub" % (ME, RETIRED, n))
+    with open(retired, "w", encoding="utf-8") as out:
+        out.write(old)
+    print("old key kept for history: %s" % retired)
 
 
 def sign_bytes(data, key=None, ns=NS):
@@ -153,8 +177,9 @@ def _assemble_allowed(ns=NS, signers=None):
     dead = _revoked(signers)
     lines = []
     for f in sorted(glob.glob(os.path.join(signers, "*.pub"))):
-        principal = os.path.splitext(os.path.basename(f))[0]
-        if principal in dead:
+        stem = os.path.splitext(os.path.basename(f))[0]
+        principal = stem.split(RETIRED)[0]
+        if stem in dead or principal in dead:
             continue
         try:
             parts = open(f, encoding="utf-8").read().split()

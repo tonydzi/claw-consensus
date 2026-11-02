@@ -43,8 +43,23 @@ tied to the work.) Format: what shipped, in plain words.
   ledger at commit time, so an approval must be used before it expires; `sig_enforce_after:
   true` disabled enforcement → unreadable values fail closed as strict. Malformed lines now go
   to the quarantine (`malformed`) instead of being skipped.
-- `reference/_test_consensus_guarantees.py`: 31 tests. Against v0.4.2 the 15 new ones fail;
-  all 31 pass now. New failure mode **N**.
+- **Found by the review bots on the pull request, each red before its fix:** a relay could keep the
+  digest and rewrite the words the human reads (the envelope now carries the full `action`, the
+  engine checks the displayed fields against it, and `sign-approval` refuses a request whose
+  action does not hash to its digest); a process holding a machine key could sign a COMMIT on a
+  Tier-2 proposal with no approval (the gate now holds on read: such a decision is quarantined as
+  `tier2-decision-without-approval` and the proposal stays open); a list as `nonce`, or a
+  non-numeric `risk_tier`, crashed the approval path; an impossible `sig_enforce_after` such as
+  `9999-99-99T99:99:99Z` grandfathered everything; the verdict cache let whoever can write a local
+  file vouch for a forged line (now opt-in, `CONSENSUS_VERIFY_CACHE=1`); `fleet_sign.py init
+  --force` failed outright, and a rotation would have erased the signed history (the old key is
+  now kept as `<machine>.retired-<n>.pub`, and `REVOKED.txt` still kills it); a machine that could
+  not sign wrote a line every reader quarantines and printed success (now exit 3, nothing written).
+- The signature tests no longer skip themselves on a loaded machine (a 20-second timeout on
+  `ssh-keygen -h` read as "not installed").
+- `reference/_test_consensus_guarantees.py`: 57 tests, all pass. New failure mode **N**.
+  **Migration:** a Tier-2 COMMIT written with a free-text approval by a pre-release v0.4.2 or v0.5.0
+  build now reads as unauthorized; engines before v0.4.2 wrote no `seq`, so their history reads as before.
 
 ## v0.4.2 - 2026-11-02
 
