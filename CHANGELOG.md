@@ -5,7 +5,7 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
-## v0.5.0 - 2026-10-14
+## v0.5.0 - 2026-11-02
 
 **The trust boundary is now in the code, not in the honesty of whoever writes a ledger line**
 (issue #9, rows A and B). Changes the event format, hence the minor bump.
