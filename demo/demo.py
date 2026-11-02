@@ -70,11 +70,8 @@ def machine_env(machine, bus):
 
 
 def have_ssh_keygen():
-    try:
-        subprocess.run([fleet_sign._ssh_keygen(), "-h"], capture_output=True, timeout=20)
-        return True
-    except Exception:
-        return False
+    # Presence only: a timeout on a loaded machine must not turn scenarios B and F into a passing SKIP.
+    return bool(shutil.which(fleet_sign._ssh_keygen()))
 
 
 def invoke(machine, bus, args, expect=0):

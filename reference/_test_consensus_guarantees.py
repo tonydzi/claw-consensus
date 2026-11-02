@@ -753,6 +753,34 @@ class ReviewFindings_Approval(Base):
         p = self.bus.run(HUB, "approve", "p-hostile", "--envelope", self.bus.signed_envelope("p-hostile", key))
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
+    def test_copied_nonce_on_an_unsigned_line_cannot_void_a_real_approval(self):
+        key = self.bus.human_key()
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        good = self.bus.signed_envelope(pid, key)
+        nonce = json.load(open(good, encoding="utf-8"))["nonce"]
+        forged = {"event_id": "noise", "proposal_id": "p-other", "type": "HUMAN_APPROVED", "actor": "EVIL",
+                  "seq": 3, "ts": "2026-07-11T00:00:00.000000Z", "approval": {"nonce": nonce}}
+        self.append("EVIL", forged)
+        p = self.bus.run(HUB, "approve", pid, "--envelope", good)
+        self.assertEqual(p.returncode, 0, "a junk line blocked approve: " + p.stdout)
+        self.append("EVIL", dict(forged, event_id="noise2"))
+        self.assertEqual(self.bus.run(HUB, "commit", pid).returncode, 0, "a junk line voided the approval")
+        self.append("EVIL", dict(forged, event_id="noise3"))
+        self.assertIn("[COMMITTED]", self.bus.status(HUB, pid), "a junk line dropped the decision")
+
+    def test_pinning_machine_keys_does_not_hide_the_human_key(self):
+        self.bus.init_key(HUB)
+        key = self.bus.human_key()
+        pinned = os.path.join(self.bus.root, "_hub_machine_pins")
+        os.makedirs(pinned)
+        shutil.copy(os.path.join(self.bus.root, "_engine", "signers", HUB + ".pub"), pinned)
+        self.bus.pins = {HUB: {"FLEET_SIGNERS_DIR": pinned}}
+        self.bus.config(human_principals=["OWNER"])
+        pid = self.bus.propose(HUB, "rotate the production API token", tier="2")
+        p = self.bus.run(HUB, "approve", pid, "--envelope", self.bus.signed_envelope(pid, key))
+        self.assertEqual(p.returncode, 0, p.stdout)
+
 
 @unittest.skipUnless(HAVE_SSH, "no ssh-keygen")
 class ReviewFindings_Signatures(Base):

@@ -208,7 +208,8 @@ QUARANTINE = []          # lines refused on the last read: {"file", "reason", "t
 TRUST = {}               # counts from the last read: enforce, ok, unsigned, quarantined
 _VERDICTS = {}           # line hash -> verify result, this process
 _CACHE = {"loaded": False, "fp": None, "good": set()}
-NONCES = {}              # approval nonce -> proposal ids that recorded it, from the last read
+NONCES = {}              # approval nonce -> [(proposal id of the line, envelope)], from the last read
+_ENVELOPE_SIGS = {}      # canonical envelope -> signature verdict, this process
 
 
 def _enforce_after():
@@ -336,7 +337,7 @@ def _all_events():
     for e in out:
         n = e["approval"].get("nonce") if e["type"] == "HUMAN_APPROVED" and isinstance(e.get("approval"), dict) else None
         if isinstance(n, str):
-            NONCES.setdefault(n, set()).add(e["proposal_id"])
+            NONCES.setdefault(n, []).append((e["proposal_id"], e["approval"]))
     QUARANTINE[:] = quarantine
     TRUST.clear()
     TRUST.update({"enforce": enforce or "DARK", "ok": ok, "unsigned": unsigned,
@@ -537,9 +538,17 @@ def _decision_authorized(e, evs, i, enforce):
     return False
 
 
+def _nonce_uses(nonce):
+    """Proposals that really spent this nonce: the human's valid signature on an envelope recorded
+    under the proposal it names. Any other line carrying the nonce is noise: nonces are readable on
+    the bus, and a copied one must not void, block or undo a real approval."""
+    if not isinstance(nonce, str):
+        return set()
+    return {p for p, env in NONCES.get(nonce, []) if env.get("proposal_id") == p and _envelope_sig(env) is True}
+
+
 def _nonce_used_elsewhere(env, pid):
-    n = env.get("nonce")
-    return isinstance(n, str) and bool(NONCES.get(n, set()) - {pid})
+    return bool(_nonce_uses(env.get("nonce")) - {pid})
 
 
 def _tier(ev):
@@ -714,6 +723,25 @@ def _human_signers_dir():
     return os.environ.get("CONSENSUS_HUMAN_SIGNERS_DIR") or None
 
 
+def _envelope_sig(env):
+    """True / False / None (no key to check against). Human keys are read from the human pin, else
+    the shared registry, never from FLEET_SIGNERS_DIR: pinning machine keys says nothing about humans."""
+    principal = env.get("human_principal")
+    if not isinstance(env.get("sig"), str) or principal not in _human_principals():
+        return False
+    data = fs.canonical(env)
+    key = (data, env["sig"], principal)
+    if key not in _ENVELOPE_SIGS:
+        try:
+            _ENVELOPE_SIGS[key] = fs.verify_bytes(
+                data, env["sig"], principal, ns=fs.NS_APPROVAL,
+                signers=_human_signers_dir() or os.path.join(BUS, "_engine", "signers"))
+        except Exception as e:
+            print("   (signature check failed to run: %s)" % e)
+            _ENVELOPE_SIGS[key] = None
+    return _ENVELOPE_SIGS[key]
+
+
 def _human_principals():
     raw = os.environ.get("CONSENSUS_HUMAN_PRINCIPALS")
     if raw is not None:
@@ -784,12 +812,7 @@ def _check_envelope(env, pid, evs, check_expiry=True):
             return False, "expires_at is not a timestamp"
         if _now() > exp:
             return False, "approval expired at %s (re-ask, don't honour a stale OK)" % env["expires_at"]
-    try:
-        v = fs.verify_bytes(fs.canonical(env), env["sig"], principal, ns=fs.NS_APPROVAL,
-                            signers=_human_signers_dir())
-    except Exception as e:
-        v = None
-        print("   (signature check failed to run: %s)" % e)
+    v = _envelope_sig(env)
     if v is not True:
         return False, ("BAD signature for %s" % principal if v is False else
                        "cannot verify: no public key for '%s' in %s" % (
@@ -885,9 +908,7 @@ def cmd_approve(idfrag, envelope_src):
     if _human_approvals(evs):
         print("already HUMAN-APPROVED #%s (idempotent skip)" % pid[:8]); return 0
     nonce = env.get("nonce") if isinstance(env, dict) else None
-    used = [e for e in _all_events() if e.get("type") == "HUMAN_APPROVED"
-            and isinstance(e.get("approval"), dict) and e["approval"].get("nonce") == nonce]
-    if nonce and used:
+    if _nonce_uses(nonce):
         print("REFUSED: nonce %s already used (replayed approval)" % str(nonce)[:12]); return 1
     ok, why = _check_envelope(env, pid, evs)
     if not ok:

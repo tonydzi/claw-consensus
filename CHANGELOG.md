@@ -55,9 +55,12 @@ tied to the work.) Format: what shipped, in plain words.
   --force` failed outright, and a rotation would have erased the signed history (the old key is
   now kept as `<machine>.retired-<n>.pub`, and `REVOKED.txt` still kills it); a machine that could
   not sign wrote a line every reader quarantines and printed success (now exit 3, nothing written).
+  A second round: a nonce copied onto a junk line could void or block a real approval (only a
+  validly signed envelope recorded under its own proposal now spends a nonce), and pinning machine
+  keys with `FLEET_SIGNERS_DIR` hid the human key (human keys come from the human pin or the shared registry).
 - The signature tests no longer skip themselves on a loaded machine (a 20-second timeout on
   `ssh-keygen -h` read as "not installed").
-- `reference/_test_consensus_guarantees.py`: 57 tests, all pass. New failure mode **N**.
+- `reference/_test_consensus_guarantees.py`: 59 tests, all pass. New failure mode **N**.
   **Migration:** a Tier-2 COMMIT written with a free-text approval by a pre-release v0.4.2 or v0.5.0
   build now reads as unauthorized; engines before v0.4.2 wrote no `seq`, so their history reads as before.
 
