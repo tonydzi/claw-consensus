@@ -9,6 +9,7 @@ Who may change what, and how a human stays in control of a fleet they don't watc
 The split of authority:
 
 - **Exactly one machine (the always-on hub) commits canon.** It is the leader in `consensus.json` and the tie-breaker in negotiations. One writer = no write-write wars over the law.
+- **A tie-break is an override, not consensus, and the ledger says so.** When the leader decides a proposal that was never agreed (a manual `commit`, or `tick`'s disagree-and-commit on a timed-out Tier-0), the event is `LEADER_OVERRIDE`, never `COMMIT`. Anyone auditing the ledger can count how often the fleet actually agreed versus how often the leader decided alone.
 - **Followers receive canon read-only.** Mechanically, not by politeness: the canon folders sync to followers as receive-only shares, so a local edit on a follower is automatically reverted by the sync engine. The rulebook cannot fork.
 - **Followers stay fully autonomous on local work.** Governance must never throttle productivity: a follower writes its own scripts, runs its own research, ships its own drafts without asking anyone. Gate the LAW, not the WORK.
 - **Followers propose canon changes through the bus:** a proposal file in a designated transit folder plus a ping to the hub. The human reviews, the hub commits, sync distributes. The loop is asynchronous and non-blocking.

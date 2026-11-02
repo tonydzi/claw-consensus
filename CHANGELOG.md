@@ -5,6 +5,45 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
+## v0.4.2 - 2026-11-02
+
+**Three documented guarantees of the reference engine are now enforced by code** (issue #9,
+rows D, C and E; found by an outside audit, re-checked by hand against `main`):
+
+- **D. The rubber-stamp guard refuses.** `verify` with a proof copied verbatim from a prior
+  VERIFY now exits 1 and records nothing. Before, it printed a warning and appended the VERIFY
+  anyway, which then counted toward "done". `--advisory` keeps the old behaviour, by name.
+- **C. A leader's unilateral call is `LEADER_OVERRIDE`, not `COMMIT`.** New event type and
+  status `overridden`. `commit` writes `COMMIT` only on `agreed` (or a human-approved Tier-2);
+  the leader committing anything else, and `tick`'s disagree-and-commit on its own proposal,
+  write `LEADER_OVERRIDE`. Split-brain detection counts both.
+- **E. Order is logical, not wall-clock.** Every event carries `seq` (a Lamport counter);
+  projection sorts by `(seq, ts, actor, event_id)`. A machine whose clock runs behind can no
+  longer write an ACCEPT that sorts before the proposal it accepts. Old events without `seq`
+  keep their `ts` order.
+- **Hostile lines** (found by an adversarial review of the fix above, each reproduced first):
+  a copied proof with a trailing "." passed the guard; a hand-appended duplicate VERIFY counted
+  toward done; a second PROPOSE with `seq: -1` took a Tier-2 proposal over as Tier-0; `seq:
+  Infinity` crashed every reader; another machine reusing my `event_id` erased my vote. Now:
+  proofs compared on their words and counted once in the projection; malformed lines refused;
+  dedup per `(actor, event_id)`; more than one PROPOSE = `conflict`, highest tier wins.
+- **Found by the review bots on the pull request, each reproduced first:** a peer not yet upgraded
+  wrote no `seq`, so its ACCEPT sorted before the PROPOSE it answered (now placed by its `ts`
+  among sequenced events); a retried `commit` wrote a false `LEADER_OVERRIDE` over a real COMMIT
+  (now idempotent); `commit` wrote a decision on a `conflict` row (now refused); a late PROPOSE
+  reopened a settled decision (now ignored if ordered after it); a non-string `proof`, `text` or
+  an infinite `risk_tier` crashed every reader (now refused or read as Tier-2); the highest legal
+  `seq` made every later event unreadable (the clock now saturates). `tick` no longer appends a
+  new ESCALATE for the same conflict on every run, and `paper/telemetry/fleet_telemetry.py` counts
+  `LEADER_OVERRIDE` as a decision, with a separate `overridden` total.
+- New `reference/_test_consensus_guarantees.py`: 31 tests. Against v0.4.0 11 of the first 16 fail,
+  against the first cut of this fix the 6 hostile-line tests fail, and 11 of the review-bot tests
+  failed before their fixes; all 31 pass now. `demo/demo.py` is unchanged and still passes all
+  five scenarios.
+
+Not in this release: rows A (signature check on load) and B (signed human approval); they change
+the event format and ship separately.
+
 ## v0.4.1 - 2026-10-31
 
 **The CAIN 2027 revision is now reproducible from this repository.** New `paper/telemetry/cain-2027/`:
