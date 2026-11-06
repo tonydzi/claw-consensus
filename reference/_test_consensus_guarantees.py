@@ -911,6 +911,27 @@ class ReviewFindings_Signatures(Base):
         self.assertNotIn("ACCEPT #", p.stdout)
 
 
+class TestBusSendTotalBudget(unittest.TestCase):
+    """bus_send.py: the whole send has ONE finite budget, per-call caps no longer stack."""
+
+    def setUp(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("bus_send_budget", os.path.join(HERE, "bus_send.py"))
+        self.bs = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.bs)
+
+    def test_each_call_gets_at_most_the_time_left(self):
+        self.bs._BUS_DEADLINE = self.bs.time.monotonic() + 5
+        self.assertLessEqual(self.bs._remaining(90), 5.0)
+        self.assertLessEqual(self.bs.TOTAL_BUS_TIMEOUT_S, 210)
+
+    def test_spent_budget_fails_the_rail_instead_of_waiting(self):
+        self.bs._BUS_DEADLINE = self.bs.time.monotonic() - 1
+        ok, info = self.bs._send_file_rail("ALL", "x")
+        self.assertFalse(ok)
+        self.assertEqual(info, "bus-deadline-spent")
+
+
 if __name__ == "__main__":
     print("engine under test: %s" % ENGINE)
     unittest.main(verbosity=2)

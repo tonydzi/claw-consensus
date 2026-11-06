@@ -27,11 +27,22 @@ Usage: python bus_send.py [<target>] "<message>"
 Exit: 0 = both rails OK; 1 = degraded (one rail down, other delivered + signalled); 3 = both down.
 Test hook (non-destructive): env BUS_SEND_FAIL=file|chat forces that rail to fail.
 """
-import os, sys, shlex, subprocess
+import os, sys, shlex, subprocess, time
 
 SCRIPTS = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPTS)
 FLAG = os.path.join(SCRIPTS, "_BUS_RAIL_DOWN.flag")
+
+# ONE finite budget for the whole send. Per-call caps (60 + 90 + 90 + 60) used to stack: a send
+# with both rails slow could hold its caller for ~300 s. Each call now gets min(its cap, time left).
+TOTAL_BUS_TIMEOUT_S = 210
+_BUS_DEADLINE = None
+
+
+def _remaining(cap):
+    if _BUS_DEADLINE is None:
+        return float(cap)
+    return max(0.0, min(float(cap), _BUS_DEADLINE - time.monotonic()))
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -42,10 +53,13 @@ except Exception:
 def _send_file_rail(target, msg):
     if os.environ.get("BUS_SEND_FAIL") == "file":
         return False, "forced-test-fail"
+    allowance = _remaining(60)
+    if allowance <= 0:
+        return False, "bus-deadline-spent"
     try:
         r = subprocess.run(
             [sys.executable, os.path.join(SCRIPTS, "machine_bus.py"), "send", target, msg],
-            capture_output=True, text=True, timeout=60)
+            capture_output=True, text=True, timeout=allowance)
         info = ((r.stdout or "") + (r.stderr or "")).strip().splitlines()
         return r.returncode == 0, (info[-1] if info else "")
     except Exception as e:
@@ -58,9 +72,12 @@ def _send_chat_rail(target, msg):
     raw = (os.environ.get("BUS_RAIL2_CMD") or "").strip()
     if not raw:
         return None, "not configured (set BUS_RAIL2_CMD to make dual-send structural)"
+    allowance = _remaining(90)
+    if allowance <= 0:
+        return False, "bus-deadline-spent"
     try:
         text = msg if str(target).upper() == "ALL" else "[-> %s] %s" % (target, msg)
-        r = subprocess.run(shlex.split(raw) + [text], timeout=90)
+        r = subprocess.run(shlex.split(raw) + [text], timeout=allowance)
         return r.returncode == 0, "posted" if r.returncode == 0 else "rc=%s" % r.returncode
     except Exception as e:
         return False, str(e)
@@ -100,6 +117,8 @@ def main():
         print("refusing to send an empty message")
         return 2
 
+    global _BUS_DEADLINE
+    _BUS_DEADLINE = time.monotonic() + TOTAL_BUS_TIMEOUT_S
     f_ok, f_info = _send_file_rail(target, msg)
     c_ok, c_info = _send_chat_rail(target, msg)
     print("DUAL-SEND -> file:%s(%s)  chat:%s(%s)" % (
@@ -122,15 +141,16 @@ def main():
         ", ".join(down), msg[:60])
     open(FLAG, "w", encoding="utf-8").write(sig)
     # raise the signal on whichever rail IS up (can't signal via a dead rail)
-    if c_ok and not f_ok:
+    # (the flag file above is already written, so a spent budget skips the live signal, not the record)
+    if c_ok and not f_ok and _remaining(90) > 0:
         try:
             raw = (os.environ.get("BUS_RAIL2_CMD") or "").strip()
-            subprocess.run(shlex.split(raw) + [sig], timeout=90)
+            subprocess.run(shlex.split(raw) + [sig], timeout=_remaining(90))
         except Exception:
             pass
-    if f_ok and not c_ok:
+    if f_ok and not c_ok and _remaining(60) > 0:
         try:
-            subprocess.run([sys.executable, os.path.join(SCRIPTS, "machine_bus.py"), "send", "ALL", sig], timeout=60)
+            subprocess.run([sys.executable, os.path.join(SCRIPTS, "machine_bus.py"), "send", "ALL", sig], timeout=_remaining(60))
         except Exception:
             pass
     print(sig)

@@ -5,6 +5,14 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
+## Unreleased
+
+- **`bus_send.py`: one finite time budget per send.** The per-call caps (60 s file rail, 90 s chat
+  rail, then 90 s / 60 s for the rail-down signal) used to stack, so a send with both rails slow
+  could hold its caller for about five minutes. The whole send now shares `TOTAL_BUS_TIMEOUT_S`
+  (210 s); each call gets `min(its cap, time left)`, and a spent budget fails the rail at once
+  (`bus-deadline-spent`) instead of waiting. Two tests added; red on the old code, green now.
+
 ## v0.5.0 - 2026-11-02
 
 **The trust boundary is now in the code, not in the honesty of whoever writes a ledger line**
