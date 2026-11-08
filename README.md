@@ -10,6 +10,8 @@ Part of the same family as [claude-bible](https://github.com/tonydzi/claude-bibl
 
 **Evaluating this work?** [START-HERE.md](START-HERE.md) is the one-page map: the 15-minute verification, the full repo family, the book, and the method.
 
+**New (6 Nov 2026):** [Coordination Decay: 103 Days of a Seven-Machine LLM Agent Fleet](https://huggingface.co/blog/TonyDzi/coordination-decay-103-days-of-a-seven-machine-llm), a Hugging Face blog write-up of the follow-up study: the safety rules held, yet consensus proposals fell from 121 to 6 a month. Data and scripts: [`paper/telemetry/cain-2027/`](paper/telemetry/cain-2027/).
+
 ## 📄 The paper
 
 **"Operating a Human-Governed Multi-Machine LLM Agent Fleet: An Experience Report"** — the preprint that documents this system: the architecture, a reproducible zero-token evaluation harness with measured results, nine production failure modes (each one happened *before* its guard existed — a historically grounded ablation; the living catalog in [`docs/FAILURE-MODES.md`](docs/FAILURE-MODES.md) has since grown to thirteen), and the design principles that survived two months of day-to-day operation on our own machines. LaTeX source: [`paper/main.tex`](paper/main.tex); the measured harness output backing every number: [`paper/demo-run-hp17-20260716.json`](paper/demo-run-hp17-20260716.json). arXiv submission (cs.MA) is pending endorsement; this repository copy is the canonical preprint until then.
