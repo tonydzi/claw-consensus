@@ -7,6 +7,15 @@ tied to the work.) Format: what shipped, in plain words.
 
 ## Unreleased
 
+- **`sync_monitor.py`: a health floor and a loud "daemon unreachable".** The monitor used to judge
+  only the peers the daemon reported. After a cleanup wiped the daemon's home, it came back with
+  zero folders and zero peers, the loop ran zero times, and the monitor printed "0/0 connected"
+  (green) for four days. Now `floor_verdict()` compares the live answer with a floor file the
+  daemon cannot reset (min folders, expected folder ids, min peers, device id, zero-peers
+  threshold); a missing floor file is RED too, and every report names what it cannot judge. An
+  unreachable REST is its own RED (45 s x 2 tries, because a live daemon rescanning a big tree can
+  hold REST past 10 s) instead of a silent return. Five tests in `_test_sync_monitor_floor.py`.
+
 - **`bus_send.py`: one finite time budget per send.** The per-call caps (60 s file rail, 90 s chat
   rail, then 90 s / 60 s for the rail-down signal) used to stack, so a send with both rails slow
   could hold its caller for about five minutes. The whole send now shares `TOTAL_BUS_TIMEOUT_S`

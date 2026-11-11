@@ -53,10 +53,20 @@ def _log(msg):
         pass
 
 
+API_TIMEOUT = 45   # a LIVE daemon rescanning a big tree can hold REST for >10 s: a short timeout = false "down"
+API_TRIES = 2
+
+
 def _api(path):
     req = urllib.request.Request(API + path, headers={"X-API-Key": APIKEY})
-    with urllib.request.urlopen(req, timeout=10) as r:
-        return json.load(r)
+    last = None
+    for _ in range(API_TRIES):
+        try:
+            with urllib.request.urlopen(req, timeout=API_TIMEOUT) as r:
+                return json.load(r)
+        except Exception as e:   # any network/parse error = one more try
+            last = e
+    raise last
 
 
 def _load_state():
@@ -127,24 +137,84 @@ def _group_nudge(buskey, down_min):
         _log(f"group_nudge failed for {buskey}: {e}")
 
 
+# --- HEALTH FLOOR ---------------------------------------------------------------------------
+# Incident: a cleanup wiped the daemon's home; it restarted on a fresh identity with ZERO folders
+# and ZERO peers. The loop below iterates only what the daemon reports, so it ran zero times and
+# the monitor printed "0/0 peers connected" (green) for four days. A detector that judges only the
+# set it is handed reads the vanishing of the whole set as silence.
+# Fix: the floor lives in a file the daemon cannot reset (SYNC_FLOOR, default STATE_DIR/floor.json):
+# {"min_folders": 3, "min_peers_configured": 2, "expect_folder_ids": [...], "device_id": "...",
+#  "zero_peers_red_after_s": 3600}. A missing floor file is RED too: a blind instrument is worse than none.
+FLOOR = os.environ.get("SYNC_FLOOR", os.path.join(STATE_DIR, "floor.json"))
+
+
+def floor_verdict(floor, folders, devices, conns, myid, state, now):
+    """Pure function (no network) -> (red_lines, info_line, state_patch)."""
+    patch = dict(state.get("__floor__") or {})
+    if "__error__" in floor:
+        return ["floor file unreadable (%s): cannot judge" % floor["__error__"]], "blind: floor unknown", patch
+    red, fids = [], set(f["id"] for f in folders)
+    want = set(floor.get("expect_folder_ids") or [])
+    if len(fids) < int(floor.get("min_folders") or 0):
+        red.append("folders %d, floor %d" % (len(fids), int(floor["min_folders"])))
+    if want - fids:
+        red.append("folders gone: " + ", ".join(sorted(want - fids)))
+    peers = [d for d in devices if d != myid]
+    if len(peers) < int(floor.get("min_peers_configured") or 0):
+        red.append("peers configured %d, floor %d (identity recreated?)" % (len(peers), int(floor["min_peers_configured"])))
+    if floor.get("device_id") and myid != floor["device_id"]:
+        red.append("myID differs from the floor: daemon on a foreign home or identity recreated")
+    online = sum(1 for d, c in conns.items() if d != myid and c.get("connected"))
+    if online == 0:
+        patch.setdefault("zero_since", now)
+        if now - patch["zero_since"] >= int(floor.get("zero_peers_red_after_s") or 3600):
+            red.append("ZERO peers connected for %.1f h" % ((now - patch["zero_since"]) / 3600.0))
+    else:
+        patch.pop("zero_since", None)
+    return red, "coverage: %d folders, %d peers configured, %d online; cannot judge nodes outside the floor" % (
+        len(fids), len(peers), online), patch
+
+
+def _load_floor():
+    try:
+        with open(FLOOR, encoding="utf-8") as fh:
+            return json.load(fh)
+    except Exception as e:
+        return {"__error__": str(e)}
+
+
 def main():
     if not APIKEY:
         print("SYNC_APIKEY not set -> cannot query the sync daemon; skip"); _log("SKIP: SYNC_APIKEY not set"); return
     try:
         names = {d["deviceID"]: d.get("name", d["deviceID"][:7]) for d in _api("/config/devices")}
+        folders = _api("/config/folders")
         conns = _api("/system/connections").get("connections", {})
         myid = _api("/system/status").get("myID", "")
     except Exception as e:
-        print("sync daemon API unreachable:", e)
-        # The daemon itself may be down -> that's its own watchdog's job; we only watch PEERS here.
+        # Unreachable REST is NOT "no data": it is its own RED outcome. The daemon watchdog
+        # restarting it does not excuse this instrument from shouting. Re-pinged at most every 3 h.
+        state = _load_state(); now = int(time.time()); fl = state.get("__floor__") or {}
+        print("RED: sync daemon REST unreachable (%d tries x %ss): %s; blind: 0 folders read" % (API_TRIES, API_TIMEOUT, e))
+        if now - int(fl.get("api_down_ping", 0) or 0) > REPING_AFTER:
+            fl["api_down_ping"] = now; state["__floor__"] = fl; _save_state(state)
+            _chat_post("🚨 SYNC RED: daemon REST unreachable (%s). Nothing can be judged; this is not 'all good'." % e)
         return
 
     state = _load_state()
     buskeys = _buskeys()
     now = int(time.time())
+    red, info, patch = floor_verdict(_load_floor(), folders, list(names), conns, myid, state, now)
+    print("floor:", *(red or ["ok"]), "|", info)
+    if red and now - int(patch.get("last_alert", 0) or 0) >= REPING_AFTER:
+        _chat_post("🚨 SYNC RED (floor breached): " + "; ".join(red))
+        patch["last_alert"] = now
+    if not red:
+        patch.pop("last_alert", None)
+    state["__floor__"] = patch
     changed = []
     for dev, c in conns.items():
-        if dev == myid:
+        if dev == myid or dev.startswith("__"):
             continue
         name = names.get(dev, dev[:7])
         bk = buskeys.get(dev)
