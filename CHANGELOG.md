@@ -5,7 +5,7 @@ change ships as a release**. (This line used to promise a release twice a week; 
 written on 2026-07-28 and carried no tag until 2026-08-04, so the promise was replaced with a rule
 tied to the work.) Format: what shipped, in plain words.
 
-## Unreleased
+## v0.5.1 - 2026-11-14
 
 - **`sync_monitor.py`: a health floor and a loud "daemon unreachable".** The monitor used to judge
   only the peers the daemon reported. After a cleanup wiped the daemon's home, it came back with
