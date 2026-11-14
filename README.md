@@ -8,9 +8,9 @@ Lets AI agents on several of your computers send each other tasks, agree on chan
 ## Quick start
 1. Install Python 3 and git.
 2. Run `git clone https://github.com/tonydzi/claw-consensus` and `cd claw-consensus`.
-3. Run `python demo/demo.py`. It pretends to be two machines on your computer and runs six scenarios.
+3. Run `python demo/demo.py`. It pretends to be two machines on your computer and runs six scenarios (this can take several minutes on a slow computer).
 
-**Done when:** the last line says `RESULT: ALL SCENARIOS PASS` and the exit code is 0. It uses no internet, no API key and no AI calls.
+**Done when:** the last line says `RESULT: ALL SCENARIOS PASS`, the exit code is 0, and the list above it shows six `[PASS]` lines. If two lines (B human-gate and F forged-line) say `[SKIP]` instead, your computer has no `ssh-keygen`, those two scenarios did not run, and the final line still says PASS: that is a partial result, not a full one. (The captured run in `demo/example-run.txt` was recorded with exactly those two skipped.) The demo uses no internet, no API key and no AI calls.
 
 > Want an AI agent to do it for you? Paste this to Claude Code / Codex / Cursor:
 > "Read the 'For AI agents' section of https://github.com/tonydzi/claw-consensus and set it up for me."
@@ -34,16 +34,18 @@ For a real two-machine setup (from the Quick start in the Details section):
 - `MACHINE_BUS_DIR`: a subfolder of the synced folder, same on both machines (the human gives the path).
 - `MACHINE_KEY`: the name of this machine.
 - `BUS_RAIL2_CMD`: optional command that takes one text argument and posts it to a chat the human reads.
-- `<bus>/machines.json` from the example in `docs/BUS.md`, and `<bus>/_decisions/consensus.json` naming the leader machine.
+- `<bus>/machines.json` from the example in `docs/BUS.md`, and `<bus>/_decisions/consensus.json` naming the leader machine, for example `{"leader": "HUB-1"}` (keys `leader`, `round_cap`, `timeout_min`; if the file is missing the leader defaults to the name `HUB-1`, so a setup without that machine name silently has no usable leader). Set `MACHINE_BUS_DIR` and `MACHINE_KEY` as environment variables on both machines before running any script (bash: `export MACHINE_KEY=LAPTOP-1`; PowerShell: `$env:MACHINE_KEY = "LAPTOP-1"`).
 - Copy `reference/` to both machines. Send a test message: `python bus_send.py OTHER-MACHINE "hello"`, read it on the other side with `python machine_bus.py read`.
 
 ### Verify
 ```bash
 python demo/demo.py                         # expected last line: RESULT: ALL SCENARIOS PASS ; exit 0
 python reference/protocol_guards.py selftest   # exit 0, prints the guard summary
-python reference/_test_consensus_guarantees.py # one test per documented guarantee
+python reference/_test_consensus_guarantees.py # one test per documented guarantee (unittest: ends with OK)
 ```
-A captured demo run is in `demo/example-run.txt`. The demo sets `CONSENSUS_NO_BUS=1`, so it never touches a chat or the network.
+The demo exits 0 and prints PASS even when scenarios B and F are skipped (no `ssh-keygen`), so also confirm the scenario list shows `[PASS]` for all six and no `[SKIP]`; report a skip as a partial pass. A captured demo run is in `demo/example-run.txt` (it has two skips). The demo sets `CONSENSUS_NO_BUS=1`, so it never touches a chat or the network. The demo starts the engine 29 times as separate processes; it took about 10 minutes on a loaded Windows laptop, so wait for it.
+
+None of these three commands tests a real two-machine setup. For that, on machine A run `python machine_bus.py whoami` (it must print `ME = <the name you set in MACHINE_KEY>` and a `label =` line that is not `(not in registry)`), send `python bus_send.py <B> "hello"`, and on machine B `python machine_bus.py read` must show the message exactly once. A message that never appears means the folder is not actually synced.
 
 ### Uninstall / rollback
 Delete the clone. For a real setup also delete the bus folder you created, and remove any scheduled `sync_monitor.py` job. Back up the bus folder first: the ledger inside is append-only history.
