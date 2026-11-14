@@ -1,4 +1,60 @@
-# claw-consensus - multiple machines, one system
+# claw-consensus
+
+Lets AI agents on several of your computers send each other tasks, agree on changes and double-check each other, so you stop copy-pasting between terminals.
+
+**Who it's for:** people who run Claude Code or other AI agents on two or more machines.
+**What you get:** a small, readable Python reference (no packages) for messaging, voting and verification between machines, plus a demo you can run offline.
+
+## Quick start
+1. Install Python 3 and git.
+2. Run `git clone https://github.com/tonydzi/claw-consensus` and `cd claw-consensus`.
+3. Run `python demo/demo.py`. It pretends to be two machines on your computer and runs six scenarios.
+
+**Done when:** the last line says `RESULT: ALL SCENARIOS PASS` and the exit code is 0. It uses no internet, no API key and no AI calls.
+
+> Want an AI agent to do it for you? Paste this to Claude Code / Codex / Cursor:
+> "Read the 'For AI agents' section of https://github.com/tonydzi/claw-consensus and set it up for me."
+
+## For AI agents
+
+### Preconditions
+- Python 3 (standard library only), git. Any OS. No accounts or keys for the demo.
+- For real use on two machines you need a folder both machines sync (Syncthing, Dropbox or a git repo) and, optionally, a group chat that a command line can post to. Ask the human which folder and which chat. Never invent a chat token.
+- Do not run it against the human's real machines until they have read `docs/GOVERNANCE.md` and agreed.
+
+### Install
+```bash
+git clone https://github.com/tonydzi/claw-consensus
+cd claw-consensus
+# nothing to pip install: the reference code is stdlib only
+```
+
+### Configure
+For a real two-machine setup (from the Quick start in the Details section):
+- `MACHINE_BUS_DIR`: a subfolder of the synced folder, same on both machines (the human gives the path).
+- `MACHINE_KEY`: the name of this machine.
+- `BUS_RAIL2_CMD`: optional command that takes one text argument and posts it to a chat the human reads.
+- `<bus>/machines.json` from the example in `docs/BUS.md`, and `<bus>/_decisions/consensus.json` naming the leader machine.
+- Copy `reference/` to both machines. Send a test message: `python bus_send.py OTHER-MACHINE "hello"`, read it on the other side with `python machine_bus.py read`.
+
+### Verify
+```bash
+python demo/demo.py                         # expected last line: RESULT: ALL SCENARIOS PASS ; exit 0
+python reference/protocol_guards.py selftest   # exit 0, prints the guard summary
+python reference/_test_consensus_guarantees.py # one test per documented guarantee
+```
+A captured demo run is in `demo/example-run.txt`. The demo sets `CONSENSUS_NO_BUS=1`, so it never touches a chat or the network.
+
+### Uninstall / rollback
+Delete the clone. For a real setup also delete the bus folder you created, and remove any scheduled `sync_monitor.py` job. Back up the bus folder first: the ledger inside is append-only history.
+
+### Rules for the agent
+- Never put tokens, passwords or chat credentials in the repo or in the bus folder.
+- Tier-2 actions (money, secrets, irreversible, outbound messages) must wait for the human's explicit yes. Do not approve them yourself.
+- Do not edit `reference/` files from two machines at once: one writer per file is the core rule.
+- Do not change the leader or add machines without asking the human.
+
+## Details
 
 > Who builds this and why → [START-HERE.md](START-HERE.md) · one page of proof: [tonydzi.github.io](https://tonydzi.github.io/)
 
