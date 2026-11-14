@@ -448,7 +448,15 @@ def main():
                 json.dump(payload, fh, ensure_ascii=False, indent=2)
             print("\n  machine-readable timings -> %s" % json_out)
 
-        print("\n  RESULT: %s" % ("ALL SCENARIOS PASS" if allpass else "SOME SCENARIOS FAILED"))
+        skipped = [r["name"] for r in results if r.get("skipped")]
+        if not allpass:
+            verdict = "SOME SCENARIOS FAILED"
+        elif skipped:
+            # A skip did not run: say so, never round it up to a full pass.
+            verdict = "ALL RUN SCENARIOS PASS, %d SKIPPED (%s): partial result" % (len(skipped), ", ".join(skipped))
+        else:
+            verdict = "ALL SCENARIOS PASS"
+        print("\n  RESULT: %s" % verdict)
         return 0 if allpass else 1
     finally:
         if keep:

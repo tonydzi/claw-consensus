@@ -10,7 +10,7 @@ Lets AI agents on several of your computers send each other tasks, agree on chan
 2. Run `git clone https://github.com/tonydzi/claw-consensus` and `cd claw-consensus`.
 3. Run `python demo/demo.py`. It pretends to be two machines on your computer and runs six scenarios (this can take several minutes on a slow computer).
 
-**Done when:** the last line says `RESULT: ALL SCENARIOS PASS`, the exit code is 0, and the list above it shows six `[PASS]` lines. If two lines (B human-gate and F forged-line) say `[SKIP]` instead, your computer has no `ssh-keygen`, those two scenarios did not run, and the final line still says PASS: that is a partial result, not a full one. (The captured run in `demo/example-run.txt` was recorded with exactly those two skipped.) The demo uses no internet, no API key and no AI calls.
+**Done when:** the last line says `RESULT: ALL SCENARIOS PASS`, the exit code is 0, and the list above it shows six `[PASS]` lines. If two lines (B human-gate and F forged-line) say `[SKIP]` instead, your computer has no `ssh-keygen`, those two scenarios did not run, and the last line says `ALL RUN SCENARIOS PASS, 2 SKIPPED (...): partial result`. (The captured run in `demo/example-run.txt` was recorded with exactly those two skipped.) The demo uses no internet, no API key and no AI calls.
 
 > Want an AI agent to do it for you? Paste this to Claude Code / Codex / Cursor:
 > "Read the 'For AI agents' section of https://github.com/tonydzi/claw-consensus and set it up for me."
@@ -39,7 +39,7 @@ For a real two-machine setup (from the Quick start in the Details section):
 
 ### Verify
 ```bash
-python demo/demo.py                         # expected last line: RESULT: ALL SCENARIOS PASS ; exit 0
+python demo/demo.py                         # expected last line: RESULT: ALL SCENARIOS PASS ; exit 0 (without ssh-keygen: "... 2 SKIPPED ...: partial result")
 python reference/protocol_guards.py selftest   # exit 0, prints the guard summary
 python reference/_test_consensus_guarantees.py # one test per documented guarantee (unittest: ends with OK)
 ```
